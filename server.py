@@ -14,7 +14,7 @@ import socket
 from battleship import run_single_player_game_online
 
 HOST = '127.0.0.1'
-PORT = 5000
+PORT = 4998 
 
 def main():
     print(f"[INFO] Server listening on {HOST}:{PORT}")
