@@ -24,30 +24,27 @@ import threading
 
 def receive_messages(rfile):
     """Continuously receive and display messages from the server"""
-    running = True
-    try:
-        while running:
-            line = rfile.readline()
-            if not line:
-                print("[INFO] Server disconnected.")
-                break
-            
-            # Process and display the message
-            line = line.strip()
+    while (True):
+        # Read from server
+        line = rfile.readline()
+        if not line:
+            print("[INFO] Server disconnected.")
+            break
+        
+        # Process and display the message
+        line = line.strip()
 
-            if line == "GRID":
-                # Begin reading board lines
-                print("\n[Board]")
-                while True:
-                    board_line = rfile.readline()
-                    if not board_line or board_line.strip() == "":
-                        break
-                    print(board_line.strip())
-            else:
-                # Normal message
-                print(line)
-    except KeyboardInterrupt:
-        print("\n[INFO] Client exiting.")
+        if line == "GRID":
+            # Begin reading board lines
+            print("\n[Board]")
+            while True:
+                board_line = rfile.readline()
+                if not board_line or board_line.strip() == "":
+                    break
+                print(board_line.strip())
+        else:
+            # Normal message
+            print(line)
 
 def main():
     # Set up connection
@@ -58,12 +55,12 @@ def main():
         
         # Start a thread for receiving messages
         receiver = threading.Thread(target=receive_messages, args=[rfile])
+        receiver.daemon = True # should be repalced with a cleaner exit if needed
         receiver.start()
 
         # Main thread handles sending user input
-        running = True
         try:
-            while(running):
+            while(True):
                 user_input = input(">> ")
                 wfile.write(user_input + '\n')
                 wfile.flush()
