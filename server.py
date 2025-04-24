@@ -18,6 +18,8 @@ HOST = '127.0.0.1'
 PORT = 5000
 MAX_CLIENTS = 2
 
+game_started = threading.Event()
+
 class Client:
     def __init__(self, conn, addr, thread):
         self.conn = conn
@@ -28,7 +30,14 @@ def handle_client(conn):
     with conn:
         rfile = conn.makefile('r')
         wfile = conn.makefile('w')
+        
+        # wait for game to start
+        while (game_started.is_set() == False):
+            pass
+        
+        # start game
         run_single_player_game_online(rfile, wfile)
+    
     print("[INFO] Client disconnected.")
 
 def main():
@@ -52,6 +61,7 @@ def main():
             print(f"Clients accepted [{num_clients}/2].")
         
         print("Starting game.")
+        game_started.set()
 
 if __name__ == "__main__":
     main()
