@@ -35,6 +35,7 @@ def main():
     print(f"[INFO] Server listening on {HOST}:{PORT}")
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
         s.bind((HOST, PORT))
+        # accept clients
         s.listen(MAX_CLIENTS)
         clients = []
         num_clients = 0
@@ -43,6 +44,7 @@ def main():
             print(f"[INFO] Client connected from {addr}")
             
             thread = threading.Thread(target=handle_client, args=[conn])
+            thread.daemon = True
             thread.start()
             
             clients.append(Client(conn, addr, thread))
