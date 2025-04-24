@@ -46,6 +46,12 @@ def receive_messages(rfile):
             # Normal message
             print(line)
 
+def send_messages(wfile):
+    while(True):
+        user_input = input(">> ")
+        wfile.write(user_input + '\n')
+        wfile.flush()
+
 def main():
     # Set up connection
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
@@ -60,10 +66,7 @@ def main():
 
         # Main thread handles sending user input
         try:
-            while(True):
-                user_input = input(">> ")
-                wfile.write(user_input + '\n')
-                wfile.flush()
+            send_messages(wfile)
         except KeyboardInterrupt:
             print("\n[INFO] Client exiting.")
 
