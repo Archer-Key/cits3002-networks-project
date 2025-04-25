@@ -12,56 +12,77 @@ However, if you want to support multiple clients (i.e. progress through further 
 
 import socket
 import threading
-from battleship import run_single_player_game_online
 
 HOST = '127.0.0.1'
 PORT = 5000
-MAX_CLIENTS = 2
-
-game_started = threading.Event()
 
 class Client:
-    def __init__(self, conn, addr, thread):
+    def __init__(self, conn, addr):
         self.conn = conn
         self.addr = addr
-        self.thread = thread
+        self.thread = None
+        self.rfile = None
+        self.wfile = None
 
-def handle_client(conn):
-    with conn:
-        rfile = conn.makefile('r')
-        wfile = conn.makefile('w')
-        
+clients = []
+MAX_CLIENTS = 2
+
+# Game related globals
+game_started = threading.Event()
+
+# Send message from one client to another through server
+def send_message_to(dest, msg):
+    dest.wfile.write(msg + "\n")
+    dest.wfile.flush()
+
+def handle_client(client):
+    socket = client.conn
+    with socket:
+        client.rfile = socket.makefile('r')
+        client.wfile = socket.makefile('w')
+
         # wait for game to start
+        player = len(clients) - 1
+        client.wfile.write(f"Waiting for game to start... [{len(clients)}/2] Players Connected...\n")
+        client.wfile.flush()
         while (game_started.is_set() == False):
             pass
         
         # start game
-        run_single_player_game_online(rfile, wfile)
+        while True:
+            pass
     
     print("[INFO] Client disconnected.")
 
+# main thread accepts clients in a loop
 def main():
     print(f"[INFO] Server listening on {HOST}:{PORT}")
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
         s.bind((HOST, PORT))
-        # accept clients
         s.listen(MAX_CLIENTS)
-        clients = []
         num_clients = 0
         while num_clients < MAX_CLIENTS:
             conn, addr = s.accept()
             print(f"[INFO] Client connected from {addr}")
+
+            client = Client(conn, addr)
             
-            thread = threading.Thread(target=handle_client, args=[conn])
+            thread = threading.Thread(target=handle_client, args=[client])
             thread.daemon = True
-            thread.start()
+            client.thread= thread
             
-            clients.append(Client(conn, addr, thread))
+            clients.append(client)
             num_clients += 1
             print(f"Clients accepted [{num_clients}/2].")
+
+            thread.start()
         
         print("Starting game.")
         game_started.set()
+
+        # Keep socket alive once max players reached (to be replaced with accept spectators)
+        while(True):
+            pass
 
 if __name__ == "__main__":
     main()

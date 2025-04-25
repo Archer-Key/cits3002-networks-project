@@ -19,7 +19,6 @@ SHIPS = [
     ("Destroyer", 2)
 ]
 
-
 class Board:
     """
     Represents a single Battleship board with hidden ships.
