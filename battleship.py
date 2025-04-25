@@ -226,7 +226,6 @@ class Board:
             row_str = " ".join(grid_to_print[r][c] for c in range(self.size))
             print(f"{row_label:2} {row_str}")
 
-
 def parse_coordinate(coord_str):
     """
     Convert something like 'B5' into zero-based (row, col).
@@ -290,7 +289,6 @@ def run_single_player_game_locally():
 
         except ValueError as e:
             print("  >> Invalid input:", e)
-
 
 def run_single_player_game_online(rfile, wfile):
     """

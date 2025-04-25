@@ -12,6 +12,8 @@ However, if you want to support multiple clients (i.e. progress through further 
 
 import socket
 import threading
+from battleship import Board
+from multiplayer_battleship import run_multiplayer_game_online
 
 HOST = '127.0.0.1'
 PORT = 5000
@@ -42,15 +44,15 @@ def handle_client(client):
         client.wfile = socket.makefile('w')
 
         # wait for game to start
-        player = len(clients) - 1
+        player_id = len(clients) - 1
         client.wfile.write(f"Waiting for game to start... [{len(clients)}/2] Players Connected...\n")
         client.wfile.flush()
         while (game_started.is_set() == False):
             pass
         
         # start game
-        while True:
-            pass
+        opponent = clients[1 - player_id]
+        run_multiplayer_game_online(client.rfile, client.wfile, opponent)
     
     print("[INFO] Client disconnected.")
 
