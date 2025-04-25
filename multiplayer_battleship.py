@@ -51,7 +51,7 @@ def run_multiplayer_game_online(rfile, wfile, opponent):
                 try:
                   row, col = parse_coordinate(coord_str)
                 except ValueError as e:
-                    print(f"[!] Invalid coordinate: {e}")
+                    send(f"[!] Invalid coordinate: {e}")
                     continue
                     
                 # Check if we can place the ship
