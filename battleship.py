@@ -232,15 +232,25 @@ def parse_coordinate(coord_str):
     Example: 'A1' => (0, 0), 'C10' => (2, 9)
     HINT: you might want to add additional input validation here...
     """
+    valid_letters = "ABCDEFGHIJ"
+    valid_numbers = ['1','2','3','4','5','6','7','8','9','10']
+
     coord_str = coord_str.strip().upper()
+    if (len(coord_str)) > 3:
+        raise ValueError
+
     row_letter = coord_str[0]
+    if (row_letter not in valid_letters):
+        raise ValueError
+
     col_digits = coord_str[1:]
+    if (col_digits not in valid_numbers):
+        raise ValueError
 
     row = ord(row_letter) - ord('A')
     col = int(col_digits) - 1  # zero-based
 
     return (row, col)
-
 
 def run_single_player_game_locally():
     """
