@@ -22,7 +22,10 @@ def run_multiplayer_game_online(client, opponent, game):
         wfile.flush()
     
     def recv():
-        return rfile.readline().strip()
+        msg = rfile.readline().strip()
+        if (len(msg) == 0): # client disconnected
+            client.handle_disconnect()
+        return(msg)
 
     def orientation_str(orientation):
         return "vertically" if orientation else "horizontally"
@@ -38,12 +41,12 @@ def run_multiplayer_game_online(client, opponent, game):
                 send(f"Placing {ship_name} (size {ship_size}) {orientation_str(orientation)}. Enter 'x' to change orientation.")
                 
                 # Handle user input
-                coord_str = recv().strip().upper() # This may need a new thread
-                if coord_str[0] == 'X':
-                  orientation = 1 - orientation
-                  continue 
+                coord_str = recv().strip().upper() 
                 try:
-                  row, col = parse_coordinate(coord_str)
+                    if coord_str[0] == 'X':
+                        orientation = 1 - orientation
+                        continue 
+                    row, col = parse_coordinate(coord_str)
                 except ValueError as e:
                     send(f"[!] Invalid coordinate: {e}")
                     continue

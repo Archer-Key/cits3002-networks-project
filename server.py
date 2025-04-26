@@ -44,9 +44,14 @@ class Client:
     def set_board(self, board):
         if (self.type == ClientType.PLAYER):
             self.board = board
+    def handle_disconnect(self):
+        # end the game
+        send_message_to_all(f"PLAYER {self.player_id} DISCONNECTED")
+        game.player_turn = 1 - self.player_id
+        game.end()
 
 MAX_CLIENTS = 2
-clients = []
+clients = [] # should store this as a heap so that we can pop random clients
 
 class Game:
     def __init__(self):
@@ -56,7 +61,6 @@ class Game:
     def start(self, players):
         self.active = True
         self.players = players
-        print(self.players)
     def start_battle(self):
         if (self.player_turn == None): # temporary solution as currently both players call start_battle when ready
             send_message_to_all("\nTHE BATTLE BEGINS", self.players)
@@ -67,8 +71,7 @@ class Game:
         self.active = False
         send_message_to_all("\nGAME OVER")
         send_message_to_all(f"PLAYER {self.player_turn} WINS")
-        for client in clients:
-            client.conn.close()
+        close_all_connections()
 
 game = Game()
 
@@ -80,6 +83,10 @@ def send_message_to(client, msg):
 def send_message_to_all(msg, clients=clients):
     for client in clients:
         send_message_to(client, msg)
+
+def close_all_connections():
+    for client in clients:
+        client.conn.close()
 
 def handle_client(client):
     socket = client.conn
