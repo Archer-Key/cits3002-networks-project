@@ -59,12 +59,16 @@ class Game:
         print(self.players)
     def start_battle(self):
         if (self.player_turn == None): # temporary solution as currently both players call start_battle when ready
+            send_message_to_all("\nTHE BATTLE BEGINS", self.players)
             self.player_turn = randint(0,1)
-            send_message_to_all(self.players, "\n THE BATTLE BEGINS")
     def end_turn(self):
         self.player_turn = 1 - self.player_turn
     def end(self):
         self.active = False
+        send_message_to_all("\nGAME OVER")
+        send_message_to_all(f"PLAYER {self.player_turn} WINS")
+        for client in clients:
+            client.conn.close()
 
 game = Game()
 
@@ -73,7 +77,7 @@ def send_message_to(client, msg):
     client.wfile.write(msg + "\n")
     client.wfile.flush()
 
-def send_message_to_all(clients=clients, msg=""):
+def send_message_to_all(msg, clients=clients):
     for client in clients:
         send_message_to(client, msg)
 

@@ -110,6 +110,5 @@ def run_multiplayer_game_online(client, opponent, game):
         place_ships_manually()
         game.start_battle() # this should be called by an external event
         battle_loop()
-        client.conn.close()
         
     main()
