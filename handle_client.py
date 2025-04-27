@@ -1,7 +1,8 @@
 from enum import Enum
 
 from protocol import *
-from server import clients, game, send_message_to, send_message_to_all
+from game import *
+from server import clients, game
 
 class ClientType(Enum):
     SPECTATOR = 0
@@ -16,19 +17,20 @@ class Client:
         self.wfile = None
         self.type = ClientType.SPECTATOR
         self.player_id = None
-        self.board = None
     def set_spectator(self):
         self.type = ClientType.SPECTATOR
         self.player_id = None
     def set_player(self, id):
         self.type = ClientType.PLAYER
         self.player_id = id
-    def set_board(self, board):
-        if (self.type == ClientType.PLAYER):
-            self.board = board
-    def handle_disconnect(self):
-        # end the game
-        pass
+
+def send_message_to(client, msg):
+    client.wfile.write(msg + "\n")
+    client.wfile.flush()
+
+def send_message_to_all(msg, clients=clients):
+    for client in clients:
+        send_message_to(client, msg)
 
 def handle_chat(client, msg):
     pass
@@ -61,23 +63,23 @@ def handle_client(client):
                     send_message_to(client, "")
                     continue
                 
-                if game.state == "WAIT":
+                if game.state == GameState.WAIT:
                     players = len(clients)
                     send_message_to(client, f"Waiting for game to start... Players connected [{players}/2]")
 
-                elif game.state == "PLACE":
+                elif game.state == GameState.PLACE:
                     if client.ships_placed < 5:
                         handle_place(client, msg)
                     else:
                       send_message_to(client, f"All ships placed. Waiting for opponent...")
                         
-                elif game.state == "BATTLE":
+                elif game.state == GameState.BATTLE:
                     if game.player_turn == client.player_id:
                         handle_fire(client, msg)
                     else:
                       send_message_to(client, f"Fire ignored. Waiting for opponent...")
 
-                elif game.state == "END":
+                elif game.state == GameState.END:
                     send_message_to(client, f"Game has ended. Thank you for playing!")
 
                 else:
@@ -86,5 +88,6 @@ def handle_client(client):
             except ValueError:
                 # handle malformed message
                 pass
-
+    
+    # handle disconnect
     print("[INFO] Client disconnected.")

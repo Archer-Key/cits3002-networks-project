@@ -10,13 +10,16 @@ The core issue is in how the client handles incoming messages.
 However, if you want to support multiple clients (i.e. progress through further Tiers), you'll need concurrency here too.
 """
 
+# standard modules
 import socket
 import threading
-from random import randint
 
+# communication
 from protocol import *
 from handle_client import Client, handle_client
 
+# game related
+from game import *
 from battleship import Board
 from multiplayer_battleship import run_multiplayer_game_online
 
@@ -26,36 +29,7 @@ PORT = 5000
 MAX_CLIENTS = 2
 clients = [] # should store this as a heap so that we can pop random clients
 
-class Game:
-    def __init__(self):
-        self.state = "WAIT"
-        self.players = None
-        self.player_turn = None
-    def start(self, players):
-        self.active = True
-        self.players = players
-    def start_battle(self):
-        if (self.player_turn == None): # temporary solution as currently both players call start_battle when ready
-            send_message_to_all("\nTHE BATTLE BEGINS", self.players)
-            self.player_turn = randint(0,1)
-    def end_turn(self):
-        self.player_turn = 1 - self.player_turn
-    def end(self):
-        self.active = False
-        send_message_to_all("\nGAME OVER")
-        send_message_to_all(f"PLAYER {self.player_turn} WINS")
-        close_all_connections()
-
 game = Game()
-
-# Send message from one client to another through server
-def send_message_to(client, msg):
-    client.wfile.write(msg + "\n")
-    client.wfile.flush()
-
-def send_message_to_all(msg, clients=clients):
-    for client in clients:
-        send_message_to(client, msg)
 
 def close_all_connections():
     for client in clients:

@@ -22,6 +22,11 @@ PORT = 5000
 #
 import threading
 
+from protocol import *
+
+client_id = None
+expected_response = MessageType.CHAT
+
 def receive_messages(rfile):
     """Continuously receive and display messages from the server"""
     while (True):
@@ -31,25 +36,50 @@ def receive_messages(rfile):
             print("[INFO] Server disconnected.")
             break
         
-        # Process and display the message
-        line = line.strip()
+        line.strip()
+        try:
+            msg = Message.decode(line)
+            
+            expected_response = msg.expected
+            
+            type = msg.type
+            if type == MessageType.CONNECT:
+                client_id = msg.msg
 
-        if line == "GRID":
-            # Begin reading board lines
-            print("\n[Board]")
-            while True:
-                board_line = rfile.readline()
-                if not board_line or board_line.strip() == "":
-                    break
-                print(board_line.strip())
-        else:
-            # Normal message
-            print(line)
+            elif type == MessageType.TEXT:
+                print(f"[{msg.id}] {msg}")
+            
+            elif type == MessageType.CHAT:
+                pass
+            
+            elif type == MessageType.BOARD:
+                # Begin reading board lines
+                print("\n[Board]")
+                while True:                                                   
+                    board_line = rfile.readline()                             
+                    if not board_line or board_line.strip() == "":            
+                        break                                                 
+                    print(board_line.strip())                                 
+            
+            elif type == MessageType.PLACE:
+                pass
+            
+            elif type == MessageType.RESULT:
+                pass
+            
+            else:
+                # client shouldn't receive a FIRE or NONE message
+                # should probably send a NACK or something
+                print("Error")
+
+        except ValueError:
+            pass
 
 def send_messages(wfile):
     while(True):
         user_input = input(">> ")
-        wfile.write(user_input + '\n')
+        msg = Message(id=client_id, type=expected_response, expected=MessageType.NONE, msg=user_input)
+        wfile.write(msg.encode())
         wfile.flush()
 
 def main():
