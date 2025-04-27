@@ -142,6 +142,7 @@ class Player:
     def __init__(self, id):
         self.id = id
         self.ships_placed = 0
+        self.ship_orientation = 0
         self.board = Board()
         self.moves = 0
         self.client = None
@@ -209,6 +210,7 @@ class Game:
     def wait_for_players(self):
         # Wait for players to connect
         while(len(clients) < 2):
+            time.sleep(1)
             pass
         # Start game
         self.set_player(0, clients[0])
@@ -219,8 +221,30 @@ class Game:
         self.announce_to_players(start_msg.encode())
     
     def place_ships(self):
-        self.send_board(self.players[0], self.players[0].board)
-        self.send_board(self.players[1], self.players[1].board)
+        # Start placing phase
+        self.send_place_prompt(self.players[0])
+        self.send_place_prompt(self.players[1])
+        # Wait for players to place all ships
+        while(self.players[0].ships_placed < 5 or self.players[1].ships_placed < 5):
+            time.sleep(1)
+            pass
+    
+    def orientation_str(self, orientation):
+        return "vertically" if orientation else "horizontally"
+    
+    def send_place_prompt(self, player):
+        self.send_board(player, player.board, show_hidden=True)
+        ship = SHIPS[player.ships_placed] # Next ship to place
+        ship_name = ship[0]
+        ship_size = ship[1]
+        orientation = player.ship_orientation
+        
+        prompt_msg = f"Place {ship_name} (Size: {ship_size}) {self.orientation_str(orientation)}. Enter 'x' to change orientation."
+        msg = Message(SERVER_ID, MessageType.TEXT, MessageType.PLACE, prompt_msg)
+        send_message_to(player.client, msg.encode())
+    
+    def place_ship(self, ship_name, orientation, coords):
+        pass
 
     def battle(self):
         pass

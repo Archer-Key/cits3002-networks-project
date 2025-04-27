@@ -17,6 +17,7 @@ from protocol import *
 client_id = None
 expected_response = MessageType.CHAT
 
+#region Recieve
 def receive_messages(rfile):
     # These two have to be here otherwise they don't work properly when referenced
     global client_id
@@ -31,11 +32,11 @@ def receive_messages(rfile):
             break
         
         line.strip()
-        print("RECIEVED: " + line) # For debugging/testing
+        #print("RECIEVED: " + line) # For debugging/testing
         try:
             msg = Message.decode(line)
 
-            print(f"DECODED: {msg.id} {msg.type} {msg.expected} {msg.msg}\n") # For debugging/testing
+            #print(f"DECODED: {msg.id} {msg.type} {msg.expected} {msg.msg}\n") # For debugging/testing
             
             expected_response = msg.expected
             
@@ -71,7 +72,9 @@ def receive_messages(rfile):
             # needs to be handled better
             print("Failure decoding message, ignoring")
             pass
+#endregion
 
+#region Send
 def send_messages(wfile):
     while(True):
         user_input = input(">> ")
@@ -79,6 +82,7 @@ def send_messages(wfile):
         print(msg.encode())
         wfile.write(msg.encode() + '\n') # DO NOT REMOVE THE NEW LINE CHARACTER OR ELSE IT WON'T SEND
         wfile.flush()
+#endregion
 
 def main():
     # Set up connection
