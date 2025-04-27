@@ -78,7 +78,7 @@ def handle_client(client):
         while True:
             raw = rfile.readline()
             if not raw:
-                print("[INFO] Client disconnected.")
+                break
             
             print("RECIEVED: " + raw)
 
@@ -133,6 +133,7 @@ def handle_client(client):
                 pass
     
     # handle disconnect
+    handle_disconnect(client)
     print("[INFO] Client disconnected.")
 #endregion
 
@@ -160,10 +161,16 @@ class Game:
         self.players = [Player(0), Player(1)]
         self.player_turn = None
     
+    """
+    Set a client as a player.
+    """
     def set_player(self, id, client):
         client.set_player()
         self.players[id].client = client
 
+    """
+    Get a player object from a client id, returns none if client id does not link to a player.
+    """
     def get_player(self, client_id):
         client_ids = [self.players[0].client.id, self.players[1].client.id]
         try:
@@ -171,14 +178,34 @@ class Game:
             return self.players[index]
         except ValueError:
             return None
-    
-    def send_board(self):
-        pass
-    
+
+    """
+    Send a player a board.
+    """
+    def send_board(self, to_player, board, show_hidden=False):
+        client = to_player.client
+
+        grid_to_send = board.hidden_grid if show_hidden else board.display_grid
+        
+        board_msg = ""
+        board_msg = board_msg + "  " + " ".join(str(i+1).rjust(2) for i in range(board.size)) + '|'
+        for r in range(board.size):
+            row_label = chr(ord('A') + r)
+            row_str = " ".join(grid_to_send[r][c] for c in range(board.size))
+            board_msg = board_msg + f"{row_label:2} {row_str}" + "|"
+
+        msg = Message(SERVER_ID, MessageType.BOARD, MessageType.PLACE, board_msg)
+        send_message_to(client, msg.encode())
+    """
+    Send a message to both players.
+    """
     def announce_to_players(self, msg):
         send_message_to(self.players[0].client, msg)
         send_message_to(self.players[1].client, msg)
     
+    """
+    Wait for two players to connect.
+    """
     def wait_for_players(self):
         # Wait for players to connect
         while(len(clients) < 2):
@@ -192,7 +219,8 @@ class Game:
         self.announce_to_players(start_msg.encode())
     
     def place_ships(self):
-        pass
+        self.send_board(self.players[0], self.players[0].board)
+        self.send_board(self.players[1], self.players[1].board)
 
     def battle(self):
         pass
@@ -211,6 +239,9 @@ game_manager = None
 #endregion
 
 #region Connections
+def handle_disconnect(client):
+    pass
+
 def close_all_connections():
     for client in clients:
         client.conn.close()

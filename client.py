@@ -31,9 +31,11 @@ def receive_messages(rfile):
             break
         
         line.strip()
-        print("RECIEVED: " + line) # This line is for debugging/testing
+        print("RECIEVED: " + line) # For debugging/testing
         try:
             msg = Message.decode(line)
+
+            print(f"DECODED: {msg.id} {msg.type} {msg.expected} {msg.msg}\n") # For debugging/testing
             
             expected_response = msg.expected
             
@@ -50,11 +52,9 @@ def receive_messages(rfile):
             elif type == MessageType.BOARD:
                 # Begin reading board lines
                 print("\n[Board]")
-                while True:                                                   
-                    board_line = rfile.readline()                             
-                    if not board_line or board_line.strip() == "":            
-                        break                                                 
-                    print(board_line.strip())                                 
+                board_lines = msg.msg.split('|')
+                for line in board_lines:
+                    print(line)
             
             elif type == MessageType.PLACE:
                 pass
