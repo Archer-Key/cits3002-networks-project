@@ -219,6 +219,12 @@ class Game:
         return "vertically" if orientation else "horizontally"
     
     def send_place_prompt(self, player):
+        if (player.ships_placed >= 5):
+            self.send_board(player, player.board, show_hidden=True)
+            msg = Message(SERVER_ID, MessageType.TEXT, MessageType.CHAT, "All ships placed. Waiting for opponent...")
+            send_message_to(player.client, msg.encode())
+            return
+
         self.send_board(player, player.board, show_hidden=True)
         ship_name, ship_size = SHIPS[player.ships_placed] # Next ship to place
         orientation = player.ship_orientation
@@ -236,6 +242,11 @@ class Game:
         board = player.board
         ship_name, ship_size = SHIPS[player.ships_placed] # Next ship to place
         orientation = player.ship_orientation
+
+        if (player.ships_placed >= 5):
+            msg = Message(SERVER_ID, MessageType.TEXT, MessageType.CHAT, "All ships placed. Waiting for opponent...")
+            send_message_to(player.client, msg.encode())
+            return
         
         # Get coordinates from message
         coords = coords.strip().upper()
@@ -266,13 +277,12 @@ class Game:
             f"[!] Cannot place {ship_name} at {coords} (orientation={self.orientation_str(orientation)}). Try again.")
         
         # Send player next prompt
-        if (player.ships_placed < 5):
-            self.send_place_prompt(player)
-        else:
-            msg = Message(SERVER_ID, MessageType.TEXT, MessageType.CHAT, "All ships placed. Waiting for opponent...")
-            send_message_to(player.client, msg.encode())
-
+        self.send_place_prompt(player)
+        
     def battle(self):
+        pass
+
+    def fire(self, client_id, coords):
         pass
     
     def end(self):
