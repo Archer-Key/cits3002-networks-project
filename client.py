@@ -31,7 +31,7 @@ def receive_messages(rfile):
             break
         
         line.strip()
-        print("RECIEVED: " + line)
+        print("RECIEVED: " + line) # This line is for debugging/testing
         try:
             msg = Message.decode(line)
             
@@ -42,7 +42,7 @@ def receive_messages(rfile):
                 client_id = msg.msg
 
             elif type == MessageType.TEXT:
-                print(f"[{msg.id}] {msg}")
+                print(f"[{msg.id}] {msg.msg}")
             
             elif type == MessageType.CHAT:
                 pass
@@ -76,8 +76,8 @@ def send_messages(wfile):
     while(True):
         user_input = input(">> ")
         msg = Message(id=client_id, type=expected_response, expected=MessageType.NONE, msg=user_input)
-        print("SENDING " + msg.encode())
-        wfile.write(msg.encode())
+        print(msg.encode())
+        wfile.write(msg.encode() + '\n') # DO NOT REMOVE THE NEW LINE CHARACTER OR ELSE IT WON'T SEND
         wfile.flush()
 
 def main():

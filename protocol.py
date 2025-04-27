@@ -28,7 +28,7 @@ class Message:
     encoded = encoded.strip().split(" ")
 
     # should check these for Index Errors
-    id = MessageType(int(encoded.pop(0)))
+    id = int(encoded.pop(0))
     type = MessageType(int(encoded.pop(0)))
     expected = MessageType(int(encoded.pop(0)))
     

@@ -10,6 +10,7 @@ The core issue is in how the client handles incoming messages.
 However, if you want to support multiple clients (i.e. progress through further Tiers), you'll need concurrency here too.
 """
 
+import time
 import socket
 import threading
 from enum import Enum
@@ -41,11 +42,11 @@ class Client:
         self.type = ClientType.SPECTATOR
     def set_spectator(self):
         self.type = ClientType.SPECTATOR
-    def set_player(self, id):
+    def set_player(self):
         self.type = ClientType.PLAYER
 
 def send_message_to(client, msg):
-    client.wfile.write(msg + "\n")
+    client.wfile.write(msg + "\n") #DO NOT REMOVE THE NEW LINE CHARCTER OR ELSE IT WON'T SEND
     client.wfile.flush()
 
 def send_message_to_all(clients, msg):
@@ -72,11 +73,14 @@ def handle_client(client):
         # send client their client ID
         id_msg = Message(id=SERVER_ID, type=MessageType.CONNECT, expected=MessageType.CHAT, msg=client.id)
         send_message_to(client, id_msg.encode())
-
+        
         # recieve messages from client
         while True:
-            raw = rfile.readline().strip()
-            print(raw)
+            raw = rfile.readline()
+            if not raw:
+                print("[INFO] Client disconnected.")
+            
+            print("RECIEVED: " + raw)
 
             try:
                 msg = Message.decode(raw)
@@ -89,6 +93,10 @@ def handle_client(client):
                     res = Message(SERVER_ID, MessageType.TEXT, MessageType.CHAT, "Incorrect message type.")
                     send_message_to(client, res.encode())
                     continue
+
+                player = game.get_player(msg.id)
+                if player == None:
+                    raise ValueError # a different type of error is probably better here
                 
                 if game.state == GameState.WAIT:
                     players = len(clients)
@@ -97,21 +105,24 @@ def handle_client(client):
                     send_message_to(client, res.encode())
 
                 elif game.state == GameState.PLACE:
-                    if client.ships_placed < 5:
+                    if player.ships_placed < 5:
                         handle_place(client, msg)
                     else:
-                      res = Message(SERVER_ID, MessageType.TEXT, MessageType.PLACE, "All ships placed. Waiting for opponent...")
+                      res = Message(SERVER_ID, MessageType.TEXT, MessageType.PLACE,\
+                                    "All ships placed. Waiting for opponent...")
                       send_message_to(client, res.encode())
                         
                 elif game.state == GameState.BATTLE:
-                    if game.player_turn == client.player_id:
+                    if game.player_turn == player.player_id:
                         handle_fire(client, msg)
                     else:
-                      res = Message(SERVER_ID, MessageType.TEXT, MessageType.FIRE, "Fire ignored. Waiting for opponent...")
+                      res = Message(SERVER_ID, MessageType.TEXT, MessageType.FIRE,\
+                                    "Fire ignored. Waiting for opponent...")
                       send_message_to(client, res.encode())
 
                 elif game.state == GameState.END:
-                    res = Message(SERVER_ID, MessageType.TEXT, MessageType.CHAT, "Game has ended. Thank you for playing!")
+                    res = Message(SERVER_ID, MessageType.TEXT, MessageType.CHAT,\
+                                  "Game has ended. Thank you for playing!")
                     send_message_to(client, res.encode())
 
                 else:
@@ -152,9 +163,21 @@ class Game:
     def set_player(self, id, client):
         client.set_player()
         self.players[id].client = client
+
+    def get_player(self, client_id):
+        client_ids = [self.players[0].client.id, self.players[1].client.id]
+        try:
+            index = client_ids.index(client_id)
+            return self.players[index]
+        except ValueError:
+            return None
     
     def send_board(self):
         pass
+    
+    def announce_to_players(self, msg):
+        send_message_to(self.players[0].client, msg)
+        send_message_to(self.players[1].client, msg)
     
     def wait_for_players(self):
         # Wait for players to connect
@@ -165,8 +188,8 @@ class Game:
         self.set_player(1, clients[1])
         game.state = GameState.PLACE
         # Announce start
-        start_msg = Message(SERVER_ID, MessageType.TEXT, MessageType.PLACE, "")
-        send_message_to_all(self.players, start_msg.encode())
+        start_msg = Message(SERVER_ID, MessageType.TEXT, MessageType.PLACE, "GAME STARTING")
+        self.announce_to_players(start_msg.encode())
     
     def place_ships(self):
         pass
@@ -199,12 +222,14 @@ def main():
         s.bind((HOST, PORT))
 
         # start the game manager thread
-        #game_manager = threading.Thread(target=game.run())
-        #game_manager.start()
+        game_manager = threading.Thread(target=game.run)
+        game_manager.daemon = True
+        game_manager.start()
+        
+        num_clients = 0
 
         # listen for connections
         s.listen(MAX_CLIENTS)
-        num_clients = 0
         while num_clients < MAX_CLIENTS:
             conn, addr = s.accept()
             print(f"[INFO] Client connected from {addr}")
