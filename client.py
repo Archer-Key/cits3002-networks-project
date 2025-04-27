@@ -3,8 +3,6 @@ client.py
 
 Connects to a Battleship server which runs the single-player game.
 Simply pipes user input to the server, and prints all server responses.
-
-TODO: Fix the message synchronization issue using concurrency (Tier 1, item 1).
 """
 
 import socket
@@ -12,14 +10,6 @@ import socket
 HOST = '127.0.0.1'
 PORT = 5000
 
-# HINT: The current problem is that the client is reading from the socket,
-# then waiting for user input, then reading again. This causes server
-# messages to appear out of order.
-#
-# Consider using Python's threading module to separate the concerns:
-# - One thread continuously reads from the socket and displays messages
-# - The main thread handles user input and sends it to the server
-#
 import threading
 
 from protocol import *
@@ -28,6 +18,10 @@ client_id = None
 expected_response = MessageType.CHAT
 
 def receive_messages(rfile):
+    # These two have to be here otherwise they don't work properly when referenced
+    global client_id
+    global expected_response
+
     """Continuously receive and display messages from the server"""
     while (True):
         # Read from server
@@ -37,6 +31,7 @@ def receive_messages(rfile):
             break
         
         line.strip()
+        print("RECIEVED: " + line)
         try:
             msg = Message.decode(line)
             
@@ -73,12 +68,15 @@ def receive_messages(rfile):
                 print("Error")
 
         except ValueError:
+            # needs to be handled better
+            print("Failure decoding message, ignoring")
             pass
 
 def send_messages(wfile):
     while(True):
         user_input = input(">> ")
         msg = Message(id=client_id, type=expected_response, expected=MessageType.NONE, msg=user_input)
+        print("SENDING " + msg.encode())
         wfile.write(msg.encode())
         wfile.flush()
 

@@ -20,16 +20,17 @@ class Message:
 
   # Encode the message into a string.
   def encode(self):
-    return self.id + " " + self.type + " " + self.expected + " " + self.msg
+    return str(self.id) + " " + str(self.type.value) + " " + str(self.expected.value) + " " + str(self.msg)
   
   # Decode and encoded message into a Message object
   @staticmethod
-  def decode(self, encoded):
+  def decode(encoded):
     encoded = encoded.strip().split(" ")
-    
-    id = int(encoded.pop(0))
-    type = int(encoded.pop(0))
-    expected = int(encoded.pop(0))
+
+    # should check these for Index Errors
+    id = MessageType(int(encoded.pop(0)))
+    type = MessageType(int(encoded.pop(0)))
+    expected = MessageType(int(encoded.pop(0)))
     
     msg = ""
     while True:
