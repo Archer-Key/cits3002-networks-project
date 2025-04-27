@@ -56,12 +56,6 @@ def send_message_to_all(clients, msg):
 def handle_chat(client, msg):
     pass
 
-def handle_place(client, msg):
-    pass
-
-def handle_fire(client, msg):
-    pass
-
 def handle_client(client):
     socket = client.conn
     with socket:
@@ -105,20 +99,10 @@ def handle_client(client):
                     send_message_to(client, res.encode())
 
                 elif game.state == GameState.PLACE:
-                    if player.ships_placed < 5:
-                        handle_place(client, msg)
-                    else:
-                      res = Message(SERVER_ID, MessageType.TEXT, MessageType.PLACE,\
-                                    "All ships placed. Waiting for opponent...")
-                      send_message_to(client, res.encode())
+                    game.place_ship(client.id, msg.msg)
                         
                 elif game.state == GameState.BATTLE:
-                    if game.player_turn == player.player_id:
-                        handle_fire(client, msg)
-                    else:
-                      res = Message(SERVER_ID, MessageType.TEXT, MessageType.FIRE,\
-                                    "Fire ignored. Waiting for opponent...")
-                      send_message_to(client, res.encode())
+                    game.fire(client.id, msg.msg)
 
                 elif game.state == GameState.END:
                     res = Message(SERVER_ID, MessageType.TEXT, MessageType.CHAT,\
@@ -211,7 +195,6 @@ class Game:
         # Wait for players to connect
         while(len(clients) < 2):
             time.sleep(1)
-            pass
         # Start game
         self.set_player(0, clients[0])
         self.set_player(1, clients[1])
@@ -220,6 +203,9 @@ class Game:
         start_msg = Message(SERVER_ID, MessageType.TEXT, MessageType.PLACE, "GAME STARTING")
         self.announce_to_players(start_msg.encode())
     
+    """
+    Begin the placing phase of the game.
+    """
     def place_ships(self):
         # Start placing phase
         self.send_place_prompt(self.players[0])
@@ -227,24 +213,64 @@ class Game:
         # Wait for players to place all ships
         while(self.players[0].ships_placed < 5 or self.players[1].ships_placed < 5):
             time.sleep(1)
-            pass
+        self.state = GameState.BATTLE
     
     def orientation_str(self, orientation):
         return "vertically" if orientation else "horizontally"
     
     def send_place_prompt(self, player):
         self.send_board(player, player.board, show_hidden=True)
-        ship = SHIPS[player.ships_placed] # Next ship to place
-        ship_name = ship[0]
-        ship_size = ship[1]
+        ship_name, ship_size = SHIPS[player.ships_placed] # Next ship to place
         orientation = player.ship_orientation
         
         prompt_msg = f"Place {ship_name} (Size: {ship_size}) {self.orientation_str(orientation)}. Enter 'x' to change orientation."
         msg = Message(SERVER_ID, MessageType.TEXT, MessageType.PLACE, prompt_msg)
         send_message_to(player.client, msg.encode())
     
-    def place_ship(self, ship_name, orientation, coords):
-        pass
+    def place_ship(self, client_id, coords):
+        player = self.get_player(client_id)
+        if player == None:
+            # handle error if player is None
+            raise ValueError
+        
+        board = player.board
+        ship_name, ship_size = SHIPS[player.ships_placed] # Next ship to place
+        orientation = player.ship_orientation
+        
+        # Get coordinates from message
+        coords = coords.strip().upper()
+        try:
+            # Change orientation
+            if coords[0] == 'X':
+                player.ship_orientation = 1 - player.ship_orientation
+                self.send_place_prompt(player)
+                return
+            # Coordinates
+            row, col = parse_coordinate(coords)
+        except ValueError as e:
+            msg = Message(SERVER_ID, MessageType.TEXT, MessageType.PLACE, f"[!] Invalid coordinate: {e}")
+            send_message_to(player.client, msg.encode())
+            self.send_place_prompt(player)
+            return
+        
+        # Check if we can place the ship
+        if board.can_place_ship(row, col, ship_size, orientation):
+            occupied_positions = board.do_place_ship(row, col, ship_size, orientation)
+            board.placed_ships.append({
+                "name": ship_name,
+                "positions": occupied_positions
+            })
+            player.ships_placed += 1
+        else:
+            msg = Message(SERVER_ID, MessageType.TEXT, MessageType.PLACE,\
+            f"[!] Cannot place {ship_name} at {coords} (orientation={self.orientation_str(orientation)}). Try again.")
+        
+        # Send player next prompt
+        if (player.ships_placed < 5):
+            self.send_place_prompt(player)
+        else:
+            msg = Message(SERVER_ID, MessageType.TEXT, MessageType.CHAT, "All ships placed. Waiting for opponent...")
+            send_message_to(player.client, msg.encode())
 
     def battle(self):
         pass
