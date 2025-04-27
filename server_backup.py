@@ -13,24 +13,51 @@ However, if you want to support multiple clients (i.e. progress through further 
 import socket
 import threading
 from random import randint
-
-from protocol import *
-from handle_client import Client, handle_client
-
 from battleship import Board
 from multiplayer_battleship import run_multiplayer_game_online
 
 HOST = '127.0.0.1'
 PORT = 5000
 
+from enum import Enum
+
+class ClientType(Enum):
+    SPECTATOR = 0
+    PLAYER = 1
+
+class Client:
+    def __init__(self, conn, addr):
+        self.conn = conn
+        self.addr = addr
+        self.thread = None
+        self.rfile = None
+        self.wfile = None
+        self.type = ClientType.SPECTATOR
+        self.player_id = None
+        self.board = None
+    def set_spectator(self):
+        self.type = ClientType.SPECTATOR
+        self.player_id = None
+    def set_player(self, id):
+        self.type = ClientType.PLAYER
+        self.player_id = id
+    def set_board(self, board):
+        if (self.type == ClientType.PLAYER):
+            self.board = board
+    def handle_disconnect(self):
+        # end the game
+        send_message_to_all(f"PLAYER {self.player_id} DISCONNECTED")
+        game.player_turn = 1 - self.player_id
+        game.end()
+
 MAX_CLIENTS = 2
 clients = [] # should store this as a heap so that we can pop random clients
 
 class Game:
     def __init__(self):
-        self.state = "WAIT"
         self.players = None
         self.player_turn = None
+        self.active = False
     def start(self, players):
         self.active = True
         self.players = players
@@ -60,6 +87,26 @@ def send_message_to_all(msg, clients=clients):
 def close_all_connections():
     for client in clients:
         client.conn.close()
+
+def handle_client(client):
+    socket = client.conn
+    with socket:
+        client.rfile = socket.makefile('r')
+        client.wfile = socket.makefile('w')
+
+        # wait for game to start
+        client.player_id = len(clients) - 1
+        client.wfile.write(f"Waiting for game to start... [{len(clients)}/2] Players Connected...\n")
+        client.wfile.flush()
+
+        while (game.active == False):
+            pass
+        
+        # start game
+        opponent = clients[1 - player_id]
+        run_multiplayer_game_online(client, opponent, game)
+    
+    print("[INFO] Client disconnected.")
 
 # main thread accepts clients in a loop
 def main():
