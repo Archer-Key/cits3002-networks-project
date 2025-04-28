@@ -427,12 +427,15 @@ class Game:
 
         # Wait for battle to end
         winner = None
+        loser = None
         while True:
             if (player0.board.all_ships_sunk()):
                 winner = self.players[1]
+                loser = self.players[0]
                 break
             elif (player1.board.all_ships_sunk()):
                 winner = self.players[0]
+                loser = self.players[1]
                 break
             time.sleep(1)
         self.state = GameState.END
@@ -440,7 +443,18 @@ class Game:
         # End game
         end_msg = Message(SERVER_ID, MessageType.TEXT, MessageType.CHAT, "GAME OVER")
         self.announce_to_players(end_msg.encode())
-        # Send result
+        
+        # Send win message
+        win_msg = Message(SERVER_ID, MessageType.TEXT, MessageType.CHAT, "YOU WIN!!!")
+        send_message_to(winner.client, win_msg.encode())
+        win_stats_msg = Message(SERVER_ID, MessageType.TEXT, MessageType.CHAT, f"You won in {winner.moves} moves!")
+        send_message_to(winner.client, win_stats_msg.encode())
+        
+        # Send lose message
+        los_msg = Message(SERVER_ID, MessageType.TEXT, MessageType.CHAT, "You lose")
+        send_message_to(loser.client, los_msg.encode())
+
+        # Close game
         pass
 
 game = Game()
