@@ -14,6 +14,7 @@ import time
 import socket
 import threading
 from enum import Enum
+from random import randint
 
 from protocol import *
 from battleship import *
@@ -55,7 +56,9 @@ def send_message_to_all(clients, msg):
 
 def handle_chat(client, msg):
     pass
+#endregion
 
+#region Handle Client
 def handle_client(client):
     socket = client.conn
     with socket:
@@ -145,7 +148,9 @@ class Game:
         self.state = GameState.WAIT
         self.players = [Player(0), Player(1)]
         self.player_turn = None
-    
+#endregion
+
+#region Player Handling
     """
     Set a client as a player.
     """
@@ -165,6 +170,12 @@ class Game:
             return None
     
     """
+    Return the opponent of player.
+    """
+    def get_opponent(self, player):
+        return self.players[1 - player.id]
+    
+    """
     Handle player disconnect.
     """
     def handle_player_disconnect(self, player):
@@ -174,8 +185,13 @@ class Game:
     Handle a player quitting the match.
     """
     def handle_player_quit(self, player):
+        msg = Message(SERVER_ID, MessageType.TEXT, MessageType.CHAT, "Thanks for playing!")
+        send_message_to(player.client, msg.encode())
+        # do something else to handle quit
         pass
+#endregion
 
+#region Game Messages
     """
     Send a player a board.
     """
@@ -193,13 +209,16 @@ class Game:
 
         msg = Message(SERVER_ID, MessageType.BOARD, MessageType.PLACE, board_msg)
         send_message_to(client, msg.encode())
+    
     """
     Send a message to both players.
     """
     def announce_to_players(self, msg):
         send_message_to(self.players[0].client, msg)
         send_message_to(self.players[1].client, msg)
-    
+#endregion
+
+#region Place Stage
     """
     Convert an orientation number code into the respective string.
     """
@@ -274,13 +293,26 @@ class Game:
         
         # Send player next prompt
         self.send_place_prompt(player)
-        
+#endregion
+
+#region Fire Stage
+    """
+    End a players turn.
+    """
+    def end_player_turn(self, player):
+        player.moves += 1
+        self.player_turn = 1 - player.id
+        opponent = self.get_opponent(player)
+        # Check that the opponent hasn't lost
+        if not opponent.board.all_ships_sunk():
+            self.send_fire_prompt(opponent)
+    
     """
     Prompt the player to fire.
     """
     def send_fire_prompt(self, player):
         # Send the opponents board
-        opponent = self.players[1 - player.id]
+        opponent = self.get_opponent(player)
         self.send_board(player, opponent.board)
         # Prompt the player to fire
         msg = Message(SERVER_ID, MessageType.TEXT, MessageType.FIRE,\
@@ -293,21 +325,71 @@ class Game:
     Called by the client handler when the user sends a FIRE message.
     """
     def fire(self, client_id, coords): # Use client_id here because it comes from the message
+        # Get the player who send the fire message
         player = self.get_player(client_id)
-
+        if (player == None):
+            raise ValueError
+            # handle this properly
+        
+        # Check for quit
         coords = coords.strip().upper()
         if coords == "QUIT":
-            msg = Message(SERVER_ID, MessageType.TEXT, MessageType.CHAT, "Thanks for playing!")
+            self.handle_player_quit(player)
+            return
+        
+        # Check that it's the player's turn
+        if (player.id != self.player_turn):
+            msg = Message(SERVER_ID, MessageType.TEXT, MessageType.FIRE,\
+                          "Fired out turn, command ignored. Waiting for opponent to fire...")
             send_message_to(player.client, msg.encode())
-            self.handle_quit(player)
+            return
+        
+        opponent = self.get_opponent(player)
+        
+        # Attempt fire
+        try:
+            row, col = parse_coordinate(coords)
+            result, sunk_name = opponent.board.fire_at(row, col)
 
-    
-    """
-    Ends the current game.
-    """
-    def end(self):
-        pass
+            # Let the player fire again if already shot
+            if result == "already_shot":
+                msg = Message(SERVER_ID, MessageType.RESULT, MessageType.FIRE,\
+                              "REPEAT You've already fired at that location.")
+                send_message_to(player.client, msg.encode())
+                self.send_fire_prompt(player)
+                return
+            
+            # Otherwise will change turn
+            res_txt = ""
+            opp_txt = ""
+            if result == 'hit':
+                if sunk_name:
+                    res_txt = f"HIT You sank the {sunk_name}!"
+                    opp_txt = f"OPPONENT HIT {coords}! Opponent sunk your {sunk_name}!"
+                else:
+                    res_txt = "HIT"
+                    opp_txt = f"OPPONENT HIT {coords}!"
+            elif result == 'miss':
+                res_txt = "MISS"
+                opp_txt = "OPPONENT MISS"
 
+            # Send result to player
+            self.send_board(player, opponent.board)
+            res_msg = Message(SERVER_ID, MessageType.RESULT, MessageType.FIRE, res_txt)
+            send_message_to(player.client, res_msg.encode())
+            # Send result to opponent
+            opp_msg = Message(SERVER_ID, MessageType.RESULT, MessageType.FIRE, opp_txt)
+            send_message_to(opponent.client, opp_msg.encode())
+            # End turn
+            self.end_player_turn(player)
+        
+        except ValueError as e:
+            msg = Message(SERVER_ID, MessageType.TEXT, MessageType.FIRE, f"Invalid input: {e}")
+            send_message_to(player.client, msg.encode())
+            self.send_fire_prompt(player)
+#endregion
+
+#region Run Game
     def run(self):
         player0 = self.players[0]
         player1 = self.players[1]
@@ -335,15 +417,31 @@ class Game:
         self.state = GameState.BATTLE
 
         # Start battle
-        self.send_fire_prompt(player0)
-        self.send_fire_prompt(player1)
+        battle_msg = Message(SERVER_ID, MessageType.TEXT, MessageType.FIRE, "BATTLE STARTING")
+        self.announce_to_players(battle_msg.encode())
+        self.player_turn = randint(0,1)
+        # Send prompt to player who's turn is first and wait to other player
+        self.send_fire_prompt(self.players[self.player_turn])
+        wait_msg = Message(SERVER_ID, MessageType.TEXT, MessageType.FIRE, "Waiting for opponent...")
+        send_message_to(self.players[1 - self.player_turn].client, wait_msg.encode())
 
         # Wait for battle to end
-        while((not player0.board.all_ships_sunk()) or (not player1.board.all_ships_sunk())):
+        winner = None
+        while True:
+            if (player0.board.all_ships_sunk()):
+                winner = self.players[1]
+                break
+            elif (player1.board.all_ships_sunk()):
+                winner = self.players[0]
+                break
             time.sleep(1)
+        self.state = GameState.END
         
         # End game
-        self.end()
+        end_msg = Message(SERVER_ID, MessageType.TEXT, MessageType.CHAT, "GAME OVER")
+        self.announce_to_players(end_msg.encode())
+        # Send result
+        pass
 
 game = Game()
 game_manager = None

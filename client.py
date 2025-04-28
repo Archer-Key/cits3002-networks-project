@@ -58,15 +58,16 @@ def receive_messages(rfile):
                     print(line)
             
             elif type == MessageType.PLACE:
+                # these don't need to be printed
                 pass
             
             elif type == MessageType.RESULT:
-                pass
+                print(msg.msg)
             
             else:
                 # client shouldn't receive a FIRE or NONE message
                 # should probably send a NACK or something
-                print("Error")
+                print("Error unexpected message type")
 
         except ValueError:
             # needs to be handled better
