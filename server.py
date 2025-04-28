@@ -163,6 +163,18 @@ class Game:
             return self.players[index]
         except ValueError:
             return None
+    
+    """
+    Handle player disconnect.
+    """
+    def handle_player_disconnect(self, player):
+        pass
+    
+    """
+    Handle a player quitting the match.
+    """
+    def handle_player_quit(self, player):
+        pass
 
     """
     Send a player a board.
@@ -189,35 +201,14 @@ class Game:
         send_message_to(self.players[1].client, msg)
     
     """
-    Wait for two players to connect.
+    Convert an orientation number code into the respective string.
     """
-    def wait_for_players(self):
-        # Wait for players to connect
-        while(len(clients) < 2):
-            time.sleep(1)
-        # Start game
-        self.set_player(0, clients[0])
-        self.set_player(1, clients[1])
-        game.state = GameState.PLACE
-        # Announce start
-        start_msg = Message(SERVER_ID, MessageType.TEXT, MessageType.PLACE, "GAME STARTING")
-        self.announce_to_players(start_msg.encode())
-    
-    """
-    Begin the placing phase of the game.
-    """
-    def place_ships(self):
-        # Start placing phase
-        self.send_place_prompt(self.players[0])
-        self.send_place_prompt(self.players[1])
-        # Wait for players to place all ships
-        while(self.players[0].ships_placed < 5 or self.players[1].ships_placed < 5):
-            time.sleep(1)
-        self.state = GameState.BATTLE
-    
     def orientation_str(self, orientation):
         return "vertically" if orientation else "horizontally"
     
+    """
+    Send the player a prompt to place a ship.
+    """
     def send_place_prompt(self, player):
         if (player.ships_placed >= 5):
             self.send_board(player, player.board, show_hidden=True)
@@ -232,7 +223,12 @@ class Game:
         prompt_msg = f"Place {ship_name} (Size: {ship_size}) {self.orientation_str(orientation)}. Enter 'x' to change orientation."
         msg = Message(SERVER_ID, MessageType.TEXT, MessageType.PLACE, prompt_msg)
         send_message_to(player.client, msg.encode())
+
+    """
+    Attempts to place a ship in the coordinates provided.
     
+    Called by the client handler when a user sends a PLACE message.
+    """ 
     def place_ship(self, client_id, coords):
         player = self.get_player(client_id)
         if player == None:
@@ -279,19 +275,74 @@ class Game:
         # Send player next prompt
         self.send_place_prompt(player)
         
-    def battle(self):
-        pass
-
-    def fire(self, client_id, coords):
-        pass
+    """
+    Prompt the player to fire.
+    """
+    def send_fire_prompt(self, player):
+        # Send the opponents board
+        opponent = self.players[1 - player.id]
+        self.send_board(player, opponent.board)
+        # Prompt the player to fire
+        msg = Message(SERVER_ID, MessageType.TEXT, MessageType.FIRE,\
+                      f"Enter coordinate to fire at (e.g. B5): ")
+        send_message_to(player.client, msg.encode())
     
+    """
+    Attempts to fire at a tile of the opponents board.
+
+    Called by the client handler when the user sends a FIRE message.
+    """
+    def fire(self, client_id, coords): # Use client_id here because it comes from the message
+        player = self.get_player(client_id)
+
+        coords = coords.strip().upper()
+        if coords == "QUIT":
+            msg = Message(SERVER_ID, MessageType.TEXT, MessageType.CHAT, "Thanks for playing!")
+            send_message_to(player.client, msg.encode())
+            self.handle_quit(player)
+
+    
+    """
+    Ends the current game.
+    """
     def end(self):
         pass
 
     def run(self):
-        self.wait_for_players()
-        self.place_ships()
-        self.battle()
+        player0 = self.players[0]
+        player1 = self.players[1]
+        
+        # Wait for players to connect
+        while(len(clients) < 2):
+            time.sleep(1)
+        
+        # Start game
+        self.set_player(0, clients[0])
+        self.set_player(1, clients[1])
+        self.state = GameState.PLACE
+        
+        # Announce start
+        start_msg = Message(SERVER_ID, MessageType.TEXT, MessageType.PLACE, "GAME STARTING")
+        self.announce_to_players(start_msg.encode())
+
+        # Start placing phase
+        self.send_place_prompt(player0)
+        self.send_place_prompt(player1)
+        
+        # Wait for players to place all ships
+        while(player0.ships_placed < 5 or player1.ships_placed < 5):
+            time.sleep(1)
+        self.state = GameState.BATTLE
+
+        # Start battle
+        self.send_fire_prompt(player0)
+        self.send_fire_prompt(player1)
+
+        # Wait for battle to end
+        while((not player0.board.all_ships_sunk()) or (not player1.board.all_ships_sunk())):
+            time.sleep(1)
+        
+        # End game
         self.end()
 
 game = Game()
