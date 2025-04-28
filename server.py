@@ -187,8 +187,12 @@ class Game:
     def handle_player_quit(self, player):
         msg = Message(SERVER_ID, MessageType.TEXT, MessageType.CHAT, "Thanks for playing!")
         send_message_to(player.client, msg.encode())
-        # do something else to handle quit
-        pass
+        
+        msg = Message(SERVER_ID, MessageType.TEXT, MessageType.CHAT, "Other player has decided to quit. Thanks for playing!")
+        send_message_to(self.get_opponent(player).client, msg.encode())
+        
+        self.state = GameState.END
+        close_all_connections()
 #endregion
 
 #region Game Messages
