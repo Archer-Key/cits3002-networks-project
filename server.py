@@ -455,7 +455,7 @@ class Game:
         send_message_to(loser.client, los_msg.encode())
 
         # Close game
-        pass
+        close_all_connections()
 
 game = Game()
 game_manager = None
