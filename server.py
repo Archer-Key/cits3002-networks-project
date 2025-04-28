@@ -10,16 +10,23 @@ The core issue is in how the client handles incoming messages.
 However, if you want to support multiple clients (i.e. progress through further Tiers), you'll need concurrency here too.
 """
 
+import time
 import socket
 import threading
+from enum import Enum
 from random import randint
-from battleship import Board
-from multiplayer_battleship import run_multiplayer_game_online
+
+from protocol import *
+from battleship import *
 
 HOST = '127.0.0.1'
 PORT = 5000
 
-from enum import Enum
+SERVER_ID = 0
+
+#region Clients
+MAX_CLIENTS = 2
+clients = [] # should store this as a heap/queue/something so that we can pop random clients
 
 class ClientType(Enum):
     SPECTATOR = 0
@@ -32,114 +39,470 @@ class Client:
         self.thread = None
         self.rfile = None
         self.wfile = None
+        self.id = None
         self.type = ClientType.SPECTATOR
-        self.player_id = None
-        self.board = None
     def set_spectator(self):
         self.type = ClientType.SPECTATOR
-        self.player_id = None
-    def set_player(self, id):
+    def set_player(self):
         self.type = ClientType.PLAYER
-        self.player_id = id
-    def set_board(self, board):
-        if (self.type == ClientType.PLAYER):
-            self.board = board
-    def handle_disconnect(self):
-        # end the game
-        send_message_to_all(f"PLAYER {self.player_id} DISCONNECTED")
-        game.player_turn = 1 - self.player_id
-        game.end()
 
-MAX_CLIENTS = 2
-clients = [] # should store this as a heap so that we can pop random clients
+def send_message_to(client, msg):
+    client.wfile.write(msg + "\n") #DO NOT REMOVE THE NEW LINE CHARCTER OR ELSE IT WON'T SEND
+    client.wfile.flush()
+
+def send_message_to_all(clients, msg):
+    for client in clients:
+        send_message_to(client, msg)
+
+def handle_chat(client, msg):
+    pass
+#endregion
+
+#region Handle Client
+def handle_client(client):
+    socket = client.conn
+    with socket:
+        rfile = socket.makefile('r')
+        wfile = socket.makefile('w')
+        client.rfile = rfile
+        client.wfile = wfile
+
+        # send client their client ID
+        id_msg = Message(id=SERVER_ID, type=MessageType.CONNECT, expected=MessageType.CHAT, msg=client.id)
+        send_message_to(client, id_msg.encode())
+        
+        # recieve messages from client
+        while True:
+            raw = rfile.readline()
+            if not raw:
+                break
+            
+            print("RECIEVED: " + raw)
+
+            try:
+                msg = Message.decode(raw)
+
+                if msg.type == MessageType.CHAT:
+                    handle_chat(client, msg)
+                    continue
+                
+                if client.type == ClientType.SPECTATOR:
+                    res = Message(SERVER_ID, MessageType.TEXT, MessageType.CHAT, "Incorrect message type.")
+                    send_message_to(client, res.encode())
+                    continue
+
+                player = game.get_player(msg.id)
+                if player == None:
+                    raise ValueError # a different type of error is probably better here
+                
+                if game.state == GameState.WAIT:
+                    players = len(clients)
+                    res = Message(SERVER_ID, MessageType.TEXT, MessageType.CHAT,\
+                                  f"Waiting for game to start... Players connected [{players}/2]")
+                    send_message_to(client, res.encode())
+
+                elif game.state == GameState.PLACE:
+                    game.place_ship(client.id, msg.msg)
+                        
+                elif game.state == GameState.BATTLE:
+                    game.fire(client.id, msg.msg)
+
+                elif game.state == GameState.END:
+                    res = Message(SERVER_ID, MessageType.TEXT, MessageType.CHAT,\
+                                  "Game has ended. Thank you for playing!")
+                    send_message_to(client, res.encode())
+
+                else:
+                    print("Error, game is in an unknown state.")
+
+            except ValueError:
+                # handle malformed message
+                pass
+    
+    # handle disconnect
+    handle_disconnect(client)
+    print("[INFO] Client disconnected.")
+#endregion
+
+#region Game
+class Player:
+    def __init__(self, id):
+        self.id = id
+        self.ships_placed = 0
+        self.ship_orientation = 0
+        self.board = Board()
+        self.moves = 0
+        self.client = None
+    def set_client(self, client):
+        self.client = client
+        return self.id
+
+class GameState(Enum):
+    WAIT = 0
+    PLACE = 1
+    BATTLE = 2
+    END = 3
 
 class Game:
     def __init__(self):
-        self.players = None
+        self.state = GameState.WAIT
+        self.players = [Player(0), Player(1)]
         self.player_turn = None
-        self.active = False
-    def start(self, players):
-        self.active = True
-        self.players = players
-    def start_battle(self):
-        if (self.player_turn == None): # temporary solution as currently both players call start_battle when ready
-            send_message_to_all("\nTHE BATTLE BEGINS", self.players)
-            self.player_turn = randint(0,1)
-    def end_turn(self):
-        self.player_turn = 1 - self.player_turn
-    def end(self):
-        self.active = False
-        send_message_to_all("\nGAME OVER")
-        send_message_to_all(f"PLAYER {self.player_turn} WINS")
+#endregion
+
+#region Player Handling
+    """
+    Set a client as a player.
+    """
+    def set_player(self, id, client):
+        client.set_player()
+        self.players[id].client = client
+
+    """
+    Get a player object from a client id, returns none if client id does not link to a player.
+    """
+    def get_player(self, client_id):
+        client_ids = [self.players[0].client.id, self.players[1].client.id]
+        try:
+            index = client_ids.index(client_id)
+            return self.players[index]
+        except ValueError:
+            return None
+    
+    """
+    Return the opponent of player.
+    """
+    def get_opponent(self, player):
+        return self.players[1 - player.id]
+    
+    """
+    Handle player disconnect.
+    """
+    def handle_player_disconnect(self, player):
+        pass
+    
+    """
+    Handle a player quitting the match.
+    """
+    def handle_player_quit(self, player):
+        msg = Message(SERVER_ID, MessageType.TEXT, MessageType.CHAT, "Thanks for playing!")
+        send_message_to(player.client, msg.encode())
+        # do something else to handle quit
+        pass
+#endregion
+
+#region Game Messages
+    """
+    Send a player a board.
+    """
+    def send_board(self, to_player, board, show_hidden=False):
+        client = to_player.client
+
+        grid_to_send = board.hidden_grid if show_hidden else board.display_grid
+        
+        board_msg = ""
+        board_msg = board_msg + "  " + " ".join(str(i+1).rjust(2) for i in range(board.size)) + '|'
+        for r in range(board.size):
+            row_label = chr(ord('A') + r)
+            row_str = " ".join(grid_to_send[r][c] for c in range(board.size))
+            board_msg = board_msg + f"{row_label:2} {row_str}" + "|"
+
+        msg = Message(SERVER_ID, MessageType.BOARD, MessageType.PLACE, board_msg)
+        send_message_to(client, msg.encode())
+    
+    """
+    Send a message to both players.
+    """
+    def announce_to_players(self, msg):
+        send_message_to(self.players[0].client, msg)
+        send_message_to(self.players[1].client, msg)
+#endregion
+
+#region Place Stage
+    """
+    Convert an orientation number code into the respective string.
+    """
+    def orientation_str(self, orientation):
+        return "vertically" if orientation else "horizontally"
+    
+    """
+    Send the player a prompt to place a ship.
+    """
+    def send_place_prompt(self, player):
+        if (player.ships_placed >= 5):
+            self.send_board(player, player.board, show_hidden=True)
+            msg = Message(SERVER_ID, MessageType.TEXT, MessageType.CHAT, "All ships placed. Waiting for opponent...")
+            send_message_to(player.client, msg.encode())
+            return
+
+        self.send_board(player, player.board, show_hidden=True)
+        ship_name, ship_size = SHIPS[player.ships_placed] # Next ship to place
+        orientation = player.ship_orientation
+        
+        prompt_msg = f"Place {ship_name} (Size: {ship_size}) {self.orientation_str(orientation)}. Enter 'x' to change orientation."
+        msg = Message(SERVER_ID, MessageType.TEXT, MessageType.PLACE, prompt_msg)
+        send_message_to(player.client, msg.encode())
+
+    """
+    Attempts to place a ship in the coordinates provided.
+    
+    Called by the client handler when a user sends a PLACE message.
+    """ 
+    def place_ship(self, client_id, coords):
+        player = self.get_player(client_id)
+        if player == None:
+            # handle error if player is None
+            raise ValueError
+        
+        board = player.board
+        ship_name, ship_size = SHIPS[player.ships_placed] # Next ship to place
+        orientation = player.ship_orientation
+
+        if (player.ships_placed >= 5):
+            msg = Message(SERVER_ID, MessageType.TEXT, MessageType.CHAT, "All ships placed. Waiting for opponent...")
+            send_message_to(player.client, msg.encode())
+            return
+        
+        # Get coordinates from message
+        coords = coords.strip().upper()
+        try:
+            # Change orientation
+            if coords[0] == 'X':
+                player.ship_orientation = 1 - player.ship_orientation
+                self.send_place_prompt(player)
+                return
+            # Coordinates
+            row, col = parse_coordinate(coords)
+        except ValueError as e:
+            msg = Message(SERVER_ID, MessageType.TEXT, MessageType.PLACE, f"[!] Invalid coordinate: {e}")
+            send_message_to(player.client, msg.encode())
+            self.send_place_prompt(player)
+            return
+        
+        # Check if we can place the ship
+        if board.can_place_ship(row, col, ship_size, orientation):
+            occupied_positions = board.do_place_ship(row, col, ship_size, orientation)
+            board.placed_ships.append({
+                "name": ship_name,
+                "positions": occupied_positions
+            })
+            player.ships_placed += 1
+        else:
+            msg = Message(SERVER_ID, MessageType.TEXT, MessageType.PLACE,\
+            f"[!] Cannot place {ship_name} at {coords} (orientation={self.orientation_str(orientation)}). Try again.")
+        
+        # Send player next prompt
+        self.send_place_prompt(player)
+#endregion
+
+#region Fire Stage
+    """
+    End a players turn.
+    """
+    def end_player_turn(self, player):
+        player.moves += 1
+        self.player_turn = 1 - player.id
+        opponent = self.get_opponent(player)
+        # Check that the opponent hasn't lost
+        if not opponent.board.all_ships_sunk():
+            self.send_fire_prompt(opponent)
+    
+    """
+    Prompt the player to fire.
+    """
+    def send_fire_prompt(self, player):
+        # Send the opponents board
+        opponent = self.get_opponent(player)
+        self.send_board(player, opponent.board)
+        # Prompt the player to fire
+        msg = Message(SERVER_ID, MessageType.TEXT, MessageType.FIRE,\
+                      f"Enter coordinate to fire at (e.g. B5): ")
+        send_message_to(player.client, msg.encode())
+    
+    """
+    Attempts to fire at a tile of the opponents board.
+
+    Called by the client handler when the user sends a FIRE message.
+    """
+    def fire(self, client_id, coords): # Use client_id here because it comes from the message
+        # Get the player who send the fire message
+        player = self.get_player(client_id)
+        if (player == None):
+            raise ValueError
+            # handle this properly
+        
+        # Check for quit
+        coords = coords.strip().upper()
+        if coords == "QUIT":
+            self.handle_player_quit(player)
+            return
+        
+        # Check that it's the player's turn
+        if (player.id != self.player_turn):
+            msg = Message(SERVER_ID, MessageType.TEXT, MessageType.FIRE,\
+                          "Fired out turn, command ignored. Waiting for opponent to fire...")
+            send_message_to(player.client, msg.encode())
+            return
+        
+        opponent = self.get_opponent(player)
+        
+        # Attempt fire
+        try:
+            row, col = parse_coordinate(coords)
+            result, sunk_name = opponent.board.fire_at(row, col)
+
+            # Let the player fire again if already shot
+            if result == "already_shot":
+                msg = Message(SERVER_ID, MessageType.RESULT, MessageType.FIRE,\
+                              "REPEAT You've already fired at that location.")
+                send_message_to(player.client, msg.encode())
+                self.send_fire_prompt(player)
+                return
+            
+            # Otherwise will change turn
+            res_txt = ""
+            opp_txt = ""
+            if result == 'hit':
+                if sunk_name:
+                    res_txt = f"HIT You sank the {sunk_name}!"
+                    opp_txt = f"OPPONENT HIT {coords}! Opponent sunk your {sunk_name}!"
+                else:
+                    res_txt = "HIT"
+                    opp_txt = f"OPPONENT HIT {coords}!"
+            elif result == 'miss':
+                res_txt = "MISS"
+                opp_txt = "OPPONENT MISS"
+
+            # Send result to player
+            self.send_board(player, opponent.board)
+            res_msg = Message(SERVER_ID, MessageType.RESULT, MessageType.FIRE, res_txt)
+            send_message_to(player.client, res_msg.encode())
+            # Send result to opponent
+            opp_msg = Message(SERVER_ID, MessageType.RESULT, MessageType.FIRE, opp_txt)
+            send_message_to(opponent.client, opp_msg.encode())
+            # End turn
+            self.end_player_turn(player)
+        
+        except ValueError as e:
+            msg = Message(SERVER_ID, MessageType.TEXT, MessageType.FIRE, f"Invalid input: {e}")
+            send_message_to(player.client, msg.encode())
+            self.send_fire_prompt(player)
+#endregion
+
+#region Run Game
+    def run(self):
+        player0 = self.players[0]
+        player1 = self.players[1]
+        
+        # Wait for players to connect
+        while(len(clients) < 2):
+            time.sleep(1)
+        
+        # Start game
+        self.set_player(0, clients[0])
+        self.set_player(1, clients[1])
+        self.state = GameState.PLACE
+        
+        # Announce start
+        start_msg = Message(SERVER_ID, MessageType.TEXT, MessageType.PLACE, "GAME STARTING")
+        self.announce_to_players(start_msg.encode())
+
+        # Start placing phase
+        self.send_place_prompt(player0)
+        self.send_place_prompt(player1)
+        
+        # Wait for players to place all ships
+        while(player0.ships_placed < 5 or player1.ships_placed < 5):
+            time.sleep(1)
+        self.state = GameState.BATTLE
+
+        # Start battle
+        battle_msg = Message(SERVER_ID, MessageType.TEXT, MessageType.FIRE, "BATTLE STARTING")
+        self.announce_to_players(battle_msg.encode())
+        self.player_turn = randint(0,1)
+        # Send prompt to player who's turn is first and wait to other player
+        self.send_fire_prompt(self.players[self.player_turn])
+        wait_msg = Message(SERVER_ID, MessageType.TEXT, MessageType.FIRE, "Waiting for opponent...")
+        send_message_to(self.players[1 - self.player_turn].client, wait_msg.encode())
+
+        # Wait for battle to end
+        winner = None
+        loser = None
+        while True:
+            if (player0.board.all_ships_sunk()):
+                winner = self.players[1]
+                loser = self.players[0]
+                break
+            elif (player1.board.all_ships_sunk()):
+                winner = self.players[0]
+                loser = self.players[1]
+                break
+            time.sleep(1)
+        self.state = GameState.END
+        
+        # End game
+        end_msg = Message(SERVER_ID, MessageType.TEXT, MessageType.CHAT, "GAME OVER")
+        self.announce_to_players(end_msg.encode())
+        
+        # Send win message
+        win_msg = Message(SERVER_ID, MessageType.TEXT, MessageType.CHAT, "YOU WIN!!!")
+        send_message_to(winner.client, win_msg.encode())
+        win_stats_msg = Message(SERVER_ID, MessageType.TEXT, MessageType.CHAT, f"You won in {winner.moves} moves!")
+        send_message_to(winner.client, win_stats_msg.encode())
+        
+        # Send lose message
+        los_msg = Message(SERVER_ID, MessageType.TEXT, MessageType.CHAT, "You lose")
+        send_message_to(loser.client, los_msg.encode())
+
+        # Close game
         close_all_connections()
 
 game = Game()
+game_manager = None
+#endregion
 
-# Send message from one client to another through server
-def send_message_to(client, msg):
-    client.wfile.write(msg + "\n")
-    client.wfile.flush()
-
-def send_message_to_all(msg, clients=clients):
-    for client in clients:
-        send_message_to(client, msg)
+#region Connections
+def handle_disconnect(client):
+    pass
 
 def close_all_connections():
     for client in clients:
         client.conn.close()
-
-def handle_client(client):
-    socket = client.conn
-    with socket:
-        client.rfile = socket.makefile('r')
-        client.wfile = socket.makefile('w')
-
-        # wait for game to start
-        player_id = len(clients) - 1
-        client.wfile.write(f"Waiting for game to start... [{len(clients)}/2] Players Connected...\n")
-        client.wfile.flush()
-
-        while (game.active == False):
-            pass
-        
-        # start game
-        opponent = clients[1 - player_id]
-        run_multiplayer_game_online(client, opponent, game)
-    
-    print("[INFO] Client disconnected.")
 
 # main thread accepts clients in a loop
 def main():
     print(f"[INFO] Server listening on {HOST}:{PORT}")
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
         s.bind((HOST, PORT))
-        s.listen(MAX_CLIENTS)
+
+        # start the game manager thread
+        game_manager = threading.Thread(target=game.run)
+        game_manager.daemon = True
+        game_manager.start()
+        
         num_clients = 0
+
+        # listen for connections
+        s.listen(MAX_CLIENTS)
         while num_clients < MAX_CLIENTS:
             conn, addr = s.accept()
             print(f"[INFO] Client connected from {addr}")
 
             client = Client(conn, addr)
-            
-            thread = threading.Thread(target=handle_client, args=[client])
-            thread.daemon = True
-            client.thread= thread
-            
             clients.append(client)
             num_clients += 1
-            print(f"Clients accepted [{num_clients}/2].")
+            client.id = num_clients # can probably replace this with a classmethod
 
+            thread = threading.Thread(target=handle_client, args=[client])
+            thread.daemon = True
+            client.thread = thread
             thread.start()
-        
-        # Start game
-        print("Starting game.")
-        clients[0].set_player(0)
-        clients[1].set_player(1)
-        game.start(players=[clients[0], clients[1]])
 
-        # Keep socket alive, ignore any other clients
+        # Keep socket alive (This will be replaced eventually)
+        print("Clients full")
         while True:
             pass
+#end region
 
 if __name__ == "__main__":
     main()
