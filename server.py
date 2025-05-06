@@ -151,6 +151,8 @@ class GameState(Enum):
 
 class Game:
     def __init__(self):
+        self.new_game()
+    def new_game(self):
         self.state = GameState.WAIT
         self.players = [Player(0), Player(1)]
         self.player_turn = None
@@ -452,7 +454,8 @@ class Game:
 #endregion
 
 #region Run Game
-    def run(self):
+    def play_game(self):
+        self.new_game()
         player0 = self.players[0]
         player1 = self.players[1]
         
@@ -478,7 +481,7 @@ class Game:
         self.send_place_prompt(player1)
         
         # Wait for players to place all ships
-        while(player0.ships_placed < 5 or player1.ships_placed < 5):
+        while((self.players[0].ships_placed < 5 or self.players[1].ships_placed < 5) and self.state == GameState.PLACE):
             time.sleep(1)
         self.state = GameState.BATTLE
 
@@ -494,12 +497,12 @@ class Game:
         # Wait for battle to end
         winner = None
         loser = None
-        while True:
-            if (player0.board.all_ships_sunk()):
+        while self.state == GameState.BATTLE:
+            if (self.players[0].board.all_ships_sunk()):
                 winner = self.players[1]
                 loser = self.players[0]
                 break
-            elif (player1.board.all_ships_sunk()):
+            elif (self.players[1].board.all_ships_sunk()):
                 winner = self.players[0]
                 loser = self.players[1]
                 break
@@ -524,8 +527,16 @@ class Game:
         spec_msg = Message(SERVER_ID, MessageType.TEXT, MessageType.CHAT, f"GAME OVER! PLAYER {winner.id} WINS!")
         self.announce_to_spectators(spec_msg.encode())
 
-        # Close game
+        time.sleep(5) # Wait 5 seconds before starting new game (can be removed later)
+    
+    """
+    Run games in a loop indefinately.
+    """
+    def run(self):
+        while True:
+            self.play_game()
         close_all_connections()
+
 
 game = Game()
 game_manager = None
