@@ -152,6 +152,7 @@ class GameState(Enum):
 class Game:
     def __init__(self):
         self.new_game()
+        self.game_number = 0
     def new_game(self):
         self.state = GameState.WAIT
         self.players = [Player(0), Player(1)]
@@ -179,6 +180,16 @@ class Game:
         self.players[player_id].client = client
         msg = Message(SERVER_ID, MessageType.TEXT, MessageType.CHAT, f"YOU ARE PLAYER {player_id}")
         send_message_to(client, msg.encode())
+
+    """
+    Decide on the next two players and set them as players.
+    """
+    def set_players(self):
+        num_clients = len(clients)
+        p0_index = (2*self.game_number)%(num_clients)
+        p1_index = (p0_index + 1)%(num_clients)
+        self.set_player(0, clients[p0_index])
+        self.set_player(1, clients[p1_index])
     
     """
     Get a player object from a client id, returns none if client id does not link to a player.
@@ -467,9 +478,8 @@ class Game:
         self.state = GameState.PLACE
 
         # Announce players
-        self.set_player(0, clients[0])
-        self.set_player(1, clients[1])
-        
+        self.set_players()
+                
         # Announce spectators
         msg = Message(SERVER_ID, MessageType.TEXT, MessageType.CHAT, f"YOU ARE A SPECTATOR")
         self.announce_to_spectators(msg.encode())
@@ -524,6 +534,8 @@ class Game:
         # Announce to spectators
         spec_msg = Message(SERVER_ID, MessageType.TEXT, MessageType.CHAT, f"GAME OVER! PLAYER {winner.id} WINS!")
         self.announce_to_spectators(spec_msg.encode())
+
+        self.game_number += 1
 
         time.sleep(5) # Wait 5 seconds before starting new game (can be removed later)
     
