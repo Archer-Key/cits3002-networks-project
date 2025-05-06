@@ -25,7 +25,6 @@ PORT = 5000
 SERVER_ID = 0
 
 #region Clients
-MAX_CLIENTS = 2
 clients = [] # should store this as a heap/queue/something so that we can pop random clients
 
 class ClientType(Enum):
@@ -70,7 +69,17 @@ def handle_client(client):
         # send client their client ID
         id_msg = Message(id=SERVER_ID, type=MessageType.CONNECT, expected=MessageType.CHAT, msg=client.id)
         send_message_to(client, id_msg.encode())
-        
+
+        # send client a message indicating their status
+        if game.state == GameState.WAIT:
+            game.send_waiting_message(client)
+        elif game.state in (GameState.PLACE, GameState.BATTLE):
+            spec_msg = Message(SERVER_ID, MessageType.TEXT, MessageType.CHAT, "YOU CURRENTLY SPECTATING")
+            send_message_to(client, spec_msg.encode())
+        elif game.state == GameState.END:
+            spec_msg = Message(SERVER_ID, MessageType.TEXT, MessageType.CHAT, "WAITING FOR NEW GAME TO START")
+            send_message_to(client, spec_msg.encode())
+
         # recieve messages from client
         while True:
             raw = rfile.readline()
@@ -96,11 +105,8 @@ def handle_client(client):
                     raise ValueError # a different type of error is probably better here
                 
                 if game.state == GameState.WAIT:
-                    players = len(clients)
-                    res = Message(SERVER_ID, MessageType.TEXT, MessageType.CHAT,\
-                                  f"Waiting for game to start... Players connected [{players}/2]")
-                    send_message_to(client, res.encode())
-
+                    game.send_waiting_message(client)
+                    
                 elif game.state == GameState.PLACE:
                     game.place_ship(client.id, msg.msg)
                         
@@ -152,12 +158,26 @@ class Game:
 
 #region Player Handling
     """
+    Sets a client as a spectator and removes them from the player list if they were previously a player.
+    """
+    def set_spectator(self, client, send_msg=False):
+        player_id = self.get_player(client.id)
+        if (player_id != None):
+            self.players[player_id] == None
+        client.set_spectator()
+        if (send_msg):
+            msg = Message(SERVER_ID, MessageType.TEXT, MessageType.CHAT, f"YOU ARE A SPECTATOR")
+            send_message_to(client, msg.encode())
+
+    """
     Set a client as a player.
     """
-    def set_player(self, id, client):
+    def set_player(self, player_id, client):
         client.set_player()
-        self.players[id].client = client
-
+        self.players[player_id].client = client
+        msg = Message(SERVER_ID, MessageType.TEXT, MessageType.CHAT, f"YOU ARE PLAYER {player_id}")
+        send_message_to(client, msg.encode())
+    
     """
     Get a player object from a client id, returns none if client id does not link to a player.
     """
@@ -197,11 +217,18 @@ class Game:
 
 #region Game Messages
     """
-    Send a player a board.
+    Send a waiting message.
     """
-    def send_board(self, to_player, board, show_hidden=False):
-        client = to_player.client
+    def send_waiting_message(self, client):
+        num_clients = len(clients)
+        res = Message(SERVER_ID, MessageType.TEXT, MessageType.CHAT,\
+                      f"Waiting for game to start... Clients connected [{num_clients}/2]")
+        send_message_to(client, res.encode())
 
+    """
+    Convert a board into a sendable string.
+    """
+    def board_to_str(self, board, show_hidden=False):
         grid_to_send = board.hidden_grid if show_hidden else board.display_grid
         
         board_msg = ""
@@ -210,9 +237,20 @@ class Game:
             row_label = chr(ord('A') + r)
             row_str = " ".join(grid_to_send[r][c] for c in range(board.size))
             board_msg = board_msg + f"{row_label:2} {row_str}" + "|"
-
+        
+        return board_msg
+    
+    """
+    Send a player a board.
+    """
+    def send_board(self, to_player, board, show_hidden=False):
+        client = to_player.client
+        board_msg = self.board_to_str(board, show_hidden)
         msg = Message(SERVER_ID, MessageType.BOARD, MessageType.PLACE, board_msg)
         send_message_to(client, msg.encode())
+        if self.state == GameState.BATTLE:
+            spec_msg = Message(SERVER_ID, MessageType.BOARD, MessageType.CHAT, board_msg)
+            self.announce_to_spectators(spec_msg.encode())
     
     """
     Send a message to both players.
@@ -220,6 +258,17 @@ class Game:
     def announce_to_players(self, msg):
         send_message_to(self.players[0].client, msg)
         send_message_to(self.players[1].client, msg)
+
+    """
+    Send a message to all spectators.
+    """
+    def announce_to_spectators(self, msg):
+        player0id = self.players[0].client.id
+        player1id = self.players[1].client.id
+        for client in clients:
+            if (client.id not in (player0id, player1id)):
+                send_message_to(client, msg)
+
 #endregion
 
 #region Place Stage
@@ -322,6 +371,8 @@ class Game:
         msg = Message(SERVER_ID, MessageType.TEXT, MessageType.FIRE,\
                       f"Enter coordinate to fire at (e.g. B5): ")
         send_message_to(player.client, msg.encode())
+        spec_msg = Message(SERVER_ID, MessageType.TEXT, MessageType.CHAT, f"PLAYER {player.id} FIRING")
+        self.announce_to_spectators(spec_msg.encode())
     
     """
     Attempts to fire at a tile of the opponents board.
@@ -366,16 +417,20 @@ class Game:
             # Otherwise will change turn
             res_txt = ""
             opp_txt = ""
+            spec_txt = ""
             if result == 'hit':
                 if sunk_name:
                     res_txt = f"HIT You sank the {sunk_name}!"
                     opp_txt = f"OPPONENT HIT {coords}! Opponent sunk your {sunk_name}!"
+                    spec_txt = f"PLAYER {player.id} FIRED AT {coords} AND HIT! PLAYER {player.id} SANK PLAYER {opponent.id}'s {sunk_name}!"
                 else:
                     res_txt = "HIT"
                     opp_txt = f"OPPONENT HIT {coords}!"
+                    spec_txt = f"PLAYER {player.id} FIRED AT {coords} AND HIT!"
             elif result == 'miss':
                 res_txt = "MISS"
-                opp_txt = "OPPONENT MISS"
+                opp_txt = "OPPONENT MISSED"
+                spec_txt = f"PLAYER {player.id} FIRED AT {coords} AND MISSED!"
 
             # Send result to player
             self.send_board(player, opponent.board)
@@ -384,6 +439,9 @@ class Game:
             # Send result to opponent
             opp_msg = Message(SERVER_ID, MessageType.RESULT, MessageType.FIRE, opp_txt)
             send_message_to(opponent.client, opp_msg.encode())
+            # Announce result to spectators
+            spec_msg = Message(SERVER_ID, MessageType.TEXT, MessageType.CHAT, spec_txt)
+            self.announce_to_spectators(spec_msg.encode())
             # End turn
             self.end_player_turn(player)
         
@@ -402,14 +460,18 @@ class Game:
         while(len(clients) < 2):
             time.sleep(1)
         
-        # Start game
+        # Announce start
+        start_msg = Message(SERVER_ID, MessageType.TEXT, MessageType.CHAT, "GAME STARTING")
+        send_message_to_all(clients, start_msg.encode())
+        self.state = GameState.PLACE
+
+        # Announce players
         self.set_player(0, clients[0])
         self.set_player(1, clients[1])
-        self.state = GameState.PLACE
         
-        # Announce start
-        start_msg = Message(SERVER_ID, MessageType.TEXT, MessageType.PLACE, "GAME STARTING")
-        self.announce_to_players(start_msg.encode())
+        # Announce spectators
+        msg = Message(SERVER_ID, MessageType.TEXT, MessageType.CHAT, f"YOU ARE A SPECTATOR")
+        self.announce_to_spectators(msg.encode())
 
         # Start placing phase
         self.send_place_prompt(player0)
@@ -455,8 +517,12 @@ class Game:
         send_message_to(winner.client, win_stats_msg.encode())
         
         # Send lose message
-        los_msg = Message(SERVER_ID, MessageType.TEXT, MessageType.CHAT, "You lose")
-        send_message_to(loser.client, los_msg.encode())
+        loss_msg = Message(SERVER_ID, MessageType.TEXT, MessageType.CHAT, "You lose")
+        send_message_to(loser.client, loss_msg.encode())
+
+        # Announce to spectators
+        spec_msg = Message(SERVER_ID, MessageType.TEXT, MessageType.CHAT, f"GAME OVER! PLAYER {winner.id} WINS!")
+        self.announce_to_spectators(spec_msg.encode())
 
         # Close game
         close_all_connections()
@@ -487,8 +553,8 @@ def main():
         num_clients = 0
 
         # listen for connections
-        s.listen(MAX_CLIENTS)
-        while num_clients < MAX_CLIENTS:
+        while True:
+            s.listen(1)
             conn, addr = s.accept()
             print(f"[INFO] Client connected from {addr}")
 
@@ -501,11 +567,6 @@ def main():
             thread.daemon = True
             client.thread = thread
             thread.start()
-
-        # Keep socket alive (This will be replaced eventually)
-        print("Clients full")
-        while True:
-            pass
 #end region
 
 if __name__ == "__main__":
