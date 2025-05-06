@@ -353,6 +353,8 @@ class Game:
                 "positions": occupied_positions
             })
             player.ships_placed += 1
+            spec_msg = Message(SERVER_ID, MessageType.TEXT, MessageType.CHAT, f"PLAYER {player.id} PLACED THEIR {ship_name}")
+            self.announce_to_spectators(spec_msg.encode())
         else:
             msg = Message(SERVER_ID, MessageType.TEXT, MessageType.PLACE,\
             f"[!] Cannot place {ship_name} at {coords} (orientation={self.orientation_str(orientation)}). Try again.")
