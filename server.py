@@ -25,7 +25,6 @@ PORT = 5000
 SERVER_ID = 0
 
 #region Clients
-MAX_CLIENTS = 128
 clients = [] # should store this as a heap/queue/something so that we can pop random clients
 
 class ClientType(Enum):
@@ -554,8 +553,8 @@ def main():
         num_clients = 0
 
         # listen for connections
-        s.listen(MAX_CLIENTS)
-        while num_clients < MAX_CLIENTS:
+        while True:
+            s.listen(1)
             conn, addr = s.accept()
             print(f"[INFO] Client connected from {addr}")
 
@@ -568,11 +567,6 @@ def main():
             thread.daemon = True
             client.thread = thread
             thread.start()
-
-        # Keep socket alive (This will be replaced eventually)
-        print("Clients full")
-        while True:
-            pass
 #end region
 
 if __name__ == "__main__":
