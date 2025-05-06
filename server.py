@@ -25,7 +25,7 @@ PORT = 5000
 SERVER_ID = 0
 
 #region Clients
-MAX_CLIENTS = 2
+MAX_CLIENTS = 128
 clients = [] # should store this as a heap/queue/something so that we can pop random clients
 
 class ClientType(Enum):
