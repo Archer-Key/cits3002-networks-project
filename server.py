@@ -197,11 +197,9 @@ class Game:
 
 #region Game Messages
     """
-    Send a player a board.
+    Convert a board into a sendable string.
     """
-    def send_board(self, to_player, board, show_hidden=False):
-        client = to_player.client
-
+    def board_to_str(self, board, show_hidden=False):
         grid_to_send = board.hidden_grid if show_hidden else board.display_grid
         
         board_msg = ""
@@ -210,9 +208,20 @@ class Game:
             row_label = chr(ord('A') + r)
             row_str = " ".join(grid_to_send[r][c] for c in range(board.size))
             board_msg = board_msg + f"{row_label:2} {row_str}" + "|"
-
+        
+        return board_msg
+    
+    """
+    Send a player a board.
+    """
+    def send_board(self, to_player, board, show_hidden=False):
+        client = to_player.client
+        board_msg = self.board_to_str(board, show_hidden)
         msg = Message(SERVER_ID, MessageType.BOARD, MessageType.PLACE, board_msg)
         send_message_to(client, msg.encode())
+        if self.state == GameState.BATTLE:
+            spec_msg = Message(SERVER_ID, MessageType.BOARD, MessageType.CHAT, board_msg)
+            self.announce_to_spectators(spec_msg.encode())
     
     """
     Send a message to both players.
@@ -333,6 +342,8 @@ class Game:
         msg = Message(SERVER_ID, MessageType.TEXT, MessageType.FIRE,\
                       f"Enter coordinate to fire at (e.g. B5): ")
         send_message_to(player.client, msg.encode())
+        spec_msg = Message(SERVER_ID, MessageType.TEXT, MessageType.CHAT, f"PLAYER {player.id} FIRING")
+        self.announce_to_spectators(spec_msg.encode())
     
     """
     Attempts to fire at a tile of the opponents board.
