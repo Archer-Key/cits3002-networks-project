@@ -220,6 +220,17 @@ class Game:
     def announce_to_players(self, msg):
         send_message_to(self.players[0].client, msg)
         send_message_to(self.players[1].client, msg)
+
+    """
+    Send a message to all spectators.
+    """
+    def announce_to_spectators(self, msg):
+        player0id = self.players[0].client.id
+        player1id = self.players[1].client.id
+        for client in clients:
+            if (client.id not in (player0id, player1id)):
+                send_message_to(client, msg)
+
 #endregion
 
 #region Place Stage
@@ -366,16 +377,20 @@ class Game:
             # Otherwise will change turn
             res_txt = ""
             opp_txt = ""
+            spec_txt = ""
             if result == 'hit':
                 if sunk_name:
                     res_txt = f"HIT You sank the {sunk_name}!"
                     opp_txt = f"OPPONENT HIT {coords}! Opponent sunk your {sunk_name}!"
+                    spec_txt = f"PLAYER {player.id} FIRED AT {coords} AND HIT! PLAYER {player.id} SANK PLAYER {opponent.id}'s {sunk_name}!"
                 else:
                     res_txt = "HIT"
                     opp_txt = f"OPPONENT HIT {coords}!"
+                    spec_txt = f"PLAYER {player.id} FIRED AT {coords} AND HIT!"
             elif result == 'miss':
                 res_txt = "MISS"
-                opp_txt = "OPPONENT MISS"
+                opp_txt = "OPPONENT MISSED"
+                spec_txt = f"PLAYER {player.id} FIRED AT {coords} AND MISSED!"
 
             # Send result to player
             self.send_board(player, opponent.board)
@@ -384,6 +399,9 @@ class Game:
             # Send result to opponent
             opp_msg = Message(SERVER_ID, MessageType.RESULT, MessageType.FIRE, opp_txt)
             send_message_to(opponent.client, opp_msg.encode())
+            # Announce result to spectators
+            spec_msg = Message(SERVER_ID, MessageType.TEXT, MessageType.CHAT, spec_txt)
+            self.announce_to_spectators(spec_msg.encode())
             # End turn
             self.end_player_turn(player)
         
@@ -455,8 +473,12 @@ class Game:
         send_message_to(winner.client, win_stats_msg.encode())
         
         # Send lose message
-        los_msg = Message(SERVER_ID, MessageType.TEXT, MessageType.CHAT, "You lose")
-        send_message_to(loser.client, los_msg.encode())
+        loss_msg = Message(SERVER_ID, MessageType.TEXT, MessageType.CHAT, "You lose")
+        send_message_to(loser.client, loss_msg.encode())
+
+        # Announce to spectators
+        spec_msg = Message(SERVER_ID, MessageType.TEXT, MessageType.CHAT, f"GAME OVER! PLAYER {winner.id} WINS!")
+        self.announce_to_spectators(spec_msg.encode())
 
         # Close game
         close_all_connections()
