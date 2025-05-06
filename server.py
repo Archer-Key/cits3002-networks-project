@@ -70,7 +70,17 @@ def handle_client(client):
         # send client their client ID
         id_msg = Message(id=SERVER_ID, type=MessageType.CONNECT, expected=MessageType.CHAT, msg=client.id)
         send_message_to(client, id_msg.encode())
-        
+
+        # send client a message indicating their status
+        if game.state == GameState.WAIT:
+            game.send_waiting_message(client)
+        elif game.state in (GameState.PLACE, GameState.BATTLE):
+            spec_msg = Message(SERVER_ID, MessageType.TEXT, MessageType.CHAT, "YOU CURRENTLY SPECTATING")
+            send_message_to(client, spec_msg.encode())
+        elif game.state == GameState.END:
+            spec_msg = Message(SERVER_ID, MessageType.TEXT, MessageType.CHAT, "WAITING FOR NEW GAME TO START")
+            send_message_to(client, spec_msg.encode())
+
         # recieve messages from client
         while True:
             raw = rfile.readline()
@@ -96,11 +106,8 @@ def handle_client(client):
                     raise ValueError # a different type of error is probably better here
                 
                 if game.state == GameState.WAIT:
-                    players = len(clients)
-                    res = Message(SERVER_ID, MessageType.TEXT, MessageType.CHAT,\
-                                  f"Waiting for game to start... Players connected [{players}/2]")
-                    send_message_to(client, res.encode())
-
+                    game.send_waiting_message(client)
+                    
                 elif game.state == GameState.PLACE:
                     game.place_ship(client.id, msg.msg)
                         
@@ -152,12 +159,26 @@ class Game:
 
 #region Player Handling
     """
+    Sets a client as a spectator and removes them from the player list if they were previously a player.
+    """
+    def set_spectator(self, client, send_msg=False):
+        player_id = self.get_player(client.id)
+        if (player_id != None):
+            self.players[player_id] == None
+        client.set_spectator()
+        if (send_msg):
+            msg = Message(SERVER_ID, MessageType.TEXT, MessageType.CHAT, f"YOU ARE A SPECTATOR")
+            send_message_to(client, msg.encode())
+
+    """
     Set a client as a player.
     """
-    def set_player(self, id, client):
+    def set_player(self, player_id, client):
         client.set_player()
-        self.players[id].client = client
-
+        self.players[player_id].client = client
+        msg = Message(SERVER_ID, MessageType.TEXT, MessageType.CHAT, f"YOU ARE PLAYER {player_id}")
+        send_message_to(client, msg.encode())
+    
     """
     Get a player object from a client id, returns none if client id does not link to a player.
     """
@@ -196,6 +217,15 @@ class Game:
 #endregion
 
 #region Game Messages
+    """
+    Send a waiting message.
+    """
+    def send_waiting_message(self, client):
+        num_clients = len(clients)
+        res = Message(SERVER_ID, MessageType.TEXT, MessageType.CHAT,\
+                      f"Waiting for game to start... Clients connected [{num_clients}/2]")
+        send_message_to(client, res.encode())
+
     """
     Convert a board into a sendable string.
     """
@@ -431,14 +461,18 @@ class Game:
         while(len(clients) < 2):
             time.sleep(1)
         
-        # Start game
+        # Announce start
+        start_msg = Message(SERVER_ID, MessageType.TEXT, MessageType.CHAT, "GAME STARTING")
+        send_message_to_all(clients, start_msg.encode())
+        self.state = GameState.PLACE
+
+        # Announce players
         self.set_player(0, clients[0])
         self.set_player(1, clients[1])
-        self.state = GameState.PLACE
         
-        # Announce start
-        start_msg = Message(SERVER_ID, MessageType.TEXT, MessageType.PLACE, "GAME STARTING")
-        self.announce_to_players(start_msg.encode())
+        # Announce spectators
+        msg = Message(SERVER_ID, MessageType.TEXT, MessageType.CHAT, f"YOU ARE A SPECTATOR")
+        self.announce_to_spectators(msg.encode())
 
         # Start placing phase
         self.send_place_prompt(player0)
