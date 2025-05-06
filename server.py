@@ -456,8 +456,6 @@ class Game:
 #region Run Game
     def play_game(self):
         self.new_game()
-        player0 = self.players[0]
-        player1 = self.players[1]
         
         # Wait for players to connect
         while(len(clients) < 2):
@@ -477,8 +475,8 @@ class Game:
         self.announce_to_spectators(msg.encode())
 
         # Start placing phase
-        self.send_place_prompt(player0)
-        self.send_place_prompt(player1)
+        self.send_place_prompt(self.players[0])
+        self.send_place_prompt(self.players[1])
         
         # Wait for players to place all ships
         while((self.players[0].ships_placed < 5 or self.players[1].ships_placed < 5) and self.state == GameState.PLACE):
