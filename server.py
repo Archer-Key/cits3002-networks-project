@@ -107,10 +107,11 @@ def handle_client(client):
                 if game.state == GameState.WAIT:
                     game.send_waiting_message(client)
                     
-                elif game.state == GameState.PLACE:
+                ## Needs better way to check mismatch between game state and message type
+                elif game.state == GameState.PLACE and msg.type == MessageType.PLACE:
                     game.place_ship(client.id, msg.msg)
                         
-                elif game.state == GameState.BATTLE:
+                elif game.state == GameState.BATTLE and msg.type == MessageType.FIRE:
                     game.fire(client.id, msg.msg)
 
                 elif game.state == GameState.END:

@@ -79,7 +79,27 @@ def receive_messages(rfile):
 def send_messages(wfile):
     while(True):
         user_input = input(">> ")
-        msg = Message(id=client_id, type=expected_response, expected=MessageType.NONE, msg=user_input)
+        ## handle word inputs to decided type then check mismatch at recieve
+        command = user_input.split(" ")
+        print(command)
+
+        send_type = expected_response
+        print(expected_response)
+
+        match command[0]:
+            case "FIRE":
+                send_type = MessageType.FIRE
+                command.pop(0)
+            case "PLACE":
+                send_type = MessageType.PLACE
+                command.pop(0)
+            case default:
+                pass
+        
+        user_msg = " ".join(command)
+        print(user_msg)
+
+        msg = Message(id=client_id, type=send_type, expected=MessageType.NONE, msg=user_msg)
         print(msg.encode())
         wfile.write(msg.encode() + '\n') # DO NOT REMOVE THE NEW LINE CHARACTER OR ELSE IT WON'T SEND
         wfile.flush()
