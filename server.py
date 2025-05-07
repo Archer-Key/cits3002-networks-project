@@ -64,7 +64,7 @@ def handle_chat(client, msg):
 class Timer:
     def __init__(self, client, duration):
         self.thread = None
-        self.client = None
+        self.client = client
         self.active = True
 
         self.start_timer_thread(duration)
@@ -73,7 +73,7 @@ class Timer:
         print("starting timeout timer")
         time.sleep(duration)
         if self.active:
-            print("[{client.id}] should timeout now")
+            print(f"[{self.client.id}] should timeout now")
             handle_disconnect(self.client)
 
     def start_timer_thread(self, duration):
