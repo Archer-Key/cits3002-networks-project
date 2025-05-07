@@ -79,6 +79,7 @@ def receive_messages(rfile):
 def send_messages(wfile):
     while(True):
         user_input = input(">> ")
+
         ## handle word inputs to decided type then check mismatch at recieve
         command = user_input.split(" ")
         print(command)
@@ -92,6 +93,9 @@ def send_messages(wfile):
                 command.pop(0)
             case "PLACE":
                 send_type = MessageType.PLACE
+                command.pop(0)
+            case "CHAT":
+                send_type = MessageType.CHAT
                 command.pop(0)
             case default:
                 pass

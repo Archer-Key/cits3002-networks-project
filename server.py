@@ -40,6 +40,7 @@ class Client:
         self.wfile = None
         self.id = None
         self.type = ClientType.SPECTATOR
+        self.timeout = None
     def set_spectator(self):
         self.type = ClientType.SPECTATOR
     def set_player(self):
@@ -55,6 +56,32 @@ def send_message_to_all(clients, msg):
 
 def handle_chat(client, msg):
     pass
+#endregion
+
+#region Timeout
+
+## runs timers on a thread, def more elegant way to do it but odds are this wont break everything
+class Timer:
+    def __init__(self, client, duration):
+        self.thread = None
+        self.client = None
+        self.active = True
+
+        self.start_timer_thread(duration)
+    
+    def timer(self, duration):
+        print("starting timeout timer")
+        time.sleep(duration)
+        if self.active:
+            print("[{client.id}] should timeout now")
+            handle_disconnect(self.client)
+
+    def start_timer_thread(self, duration):
+        thread = threading.Thread(target=self.timer, args=(duration,))
+        thread.start()
+        self.thread = thread
+        return thread
+
 #endregion
 
 #region Handle Client
@@ -83,10 +110,17 @@ def handle_client(client):
         # recieve messages from client
         while True:
             raw = rfile.readline()
+
             if not raw:
                 break
             
             print("RECIEVED: " + raw)
+
+            ## start timeout timer for players
+            if client.type == ClientType.PLAYER:
+                if client.timeout:
+                    client.timeout.active = False
+                client.timeout = Timer(client, 30)
 
             try:
                 msg = Message.decode(raw)
@@ -107,12 +141,20 @@ def handle_client(client):
                 if game.state == GameState.WAIT:
                     game.send_waiting_message(client)
                     
-                ## Needs better way to check mismatch between game state and message type
-                elif game.state == GameState.PLACE and msg.type == MessageType.PLACE:
-                    game.place_ship(client.id, msg.msg)
+            ## Needs better way to check mismatch between game state and message type
+                elif game.state == GameState.PLACE:
+                    if msg.type == MessageType.PLACE:
+                        game.place_ship(client.id, msg.msg)
+                    else:
+                        res = Message(SERVER_ID, MessageType.TEXT, MessageType.NONE, "Incorrect Command Type")
+                        send_message_to(client, res.encode())
                         
-                elif game.state == GameState.BATTLE and msg.type == MessageType.FIRE:
-                    game.fire(client.id, msg.msg)
+                elif game.state == GameState.BATTLE:
+                    if msg.type == MessageType.FIRE:
+                        game.fire(client.id, msg.msg)
+                    else:
+                        res = Message(SERVER_ID, MessageType.TEXT, MessageType.NONE, "Incorrect Command Type")
+                        send_message_to(client, res.encode())
 
                 elif game.state == GameState.END:
                     res = Message(SERVER_ID, MessageType.TEXT, MessageType.CHAT,\
@@ -125,7 +167,7 @@ def handle_client(client):
             except ValueError:
                 # handle malformed message
                 pass
-    
+
     # handle disconnect
     handle_disconnect(client)
     print("[INFO] Client disconnected.")
