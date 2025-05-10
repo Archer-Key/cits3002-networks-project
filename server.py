@@ -635,7 +635,8 @@ game_manager = None
 #region Connections
 def handle_disconnect(client):
     print(f"[INFO] Client [{client.id}] disconnected.")
-    client.timeout.active = False
+    if client.timeout:
+        client.timeout.active = False
     if client in clients:
         clients.remove(client)
     game.remove_player(client)

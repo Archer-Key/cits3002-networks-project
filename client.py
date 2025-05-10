@@ -87,16 +87,23 @@ def send_messages(wfile):
         send_type = expected_response
         print(expected_response)
 
-        match command[0]:
+        match command[0].upper():
             case "FIRE":
                 send_type = MessageType.FIRE
                 command.pop(0)
+                break
             case "PLACE":
                 send_type = MessageType.PLACE
                 command.pop(0)
+                break
             case "CHAT":
                 send_type = MessageType.CHAT
                 command.pop(0)
+                break
+            case "QUIT":
+                send_type = MessageType.DISCONNECT
+                command.pop(0)
+                break
             case default:
                 pass
         
@@ -107,6 +114,9 @@ def send_messages(wfile):
         print(msg.encode())
         wfile.write(msg.encode() + '\n') # DO NOT REMOVE THE NEW LINE CHARACTER OR ELSE IT WON'T SEND
         wfile.flush()
+
+        if send_type == MessageType.DISCONNECT:
+            quit()
 #endregion
 
 def main():
