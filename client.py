@@ -79,10 +79,44 @@ def receive_messages(rfile):
 def send_messages(wfile):
     while(True):
         user_input = input(">> ")
-        msg = Message(id=client_id, type=expected_response, expected=MessageType.NONE, msg=user_input)
+
+        ## handle word inputs to decided type then check mismatch at recieve
+        command = user_input.split(" ")
+        print(command)
+
+        send_type = expected_response
+        print(expected_response)
+
+        match command[0].upper():
+            case "FIRE":
+                send_type = MessageType.FIRE
+                command.pop(0)
+                break
+            case "PLACE":
+                send_type = MessageType.PLACE
+                command.pop(0)
+                break
+            case "CHAT":
+                send_type = MessageType.CHAT
+                command.pop(0)
+                break
+            case "QUIT":
+                send_type = MessageType.DISCONNECT
+                command.pop(0)
+                break
+            case default:
+                pass
+        
+        user_msg = " ".join(command)
+        print(user_msg)
+
+        msg = Message(id=client_id, type=send_type, expected=MessageType.NONE, msg=user_msg)
         print(msg.encode())
         wfile.write(msg.encode() + '\n') # DO NOT REMOVE THE NEW LINE CHARACTER OR ELSE IT WON'T SEND
         wfile.flush()
+
+        if send_type == MessageType.DISCONNECT:
+            quit()
 #endregion
 
 def main():
@@ -102,6 +136,10 @@ def main():
             send_messages(wfile)
         except KeyboardInterrupt:
             print("\n[INFO] Client exiting.")
+            msg = Message(id=client_id, type=MessageType.DISCONNECT, expected=MessageType.NONE, msg=client_id)
+            print(msg.encode())
+            wfile.write(msg.encode() + '\n')
+            wfile.flush()
 
 if __name__ == "__main__":
     main()
