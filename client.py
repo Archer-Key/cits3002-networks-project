@@ -126,6 +126,10 @@ def main():
             send_messages(wfile)
         except KeyboardInterrupt:
             print("\n[INFO] Client exiting.")
+            msg = Message(id=client_id, type=MessageType.DISCONNECT, expected=MessageType.NONE, msg=client_id)
+            print(msg.encode())
+            wfile.write(msg.encode() + '\n')
+            wfile.flush()
 
 if __name__ == "__main__":
     main()
