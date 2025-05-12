@@ -16,6 +16,7 @@ from protocol import *
 
 client_id = None
 expected_response = MessageType.CHAT
+username = ""
 
 #region Recieve
 def receive_messages(rfile):
@@ -64,6 +65,10 @@ def receive_messages(rfile):
             elif type == MessageType.RESULT:
                 print(msg.msg)
             
+            elif type == MessageType.DISCONNECT:
+                print("[INFO] you have been disconnected from the server")
+                quit()
+            
             else:
                 # client shouldn't receive a FIRE or NONE message
                 # should probably send a NACK or something
@@ -91,35 +96,42 @@ def send_messages(wfile):
             case "FIRE":
                 send_type = MessageType.FIRE
                 command.pop(0)
-                break
             case "PLACE":
                 send_type = MessageType.PLACE
                 command.pop(0)
-                break
             case "CHAT":
                 send_type = MessageType.CHAT
                 command.pop(0)
-                break
+            case "USER":
+                send_type = MessageType.CONNECT
+                command.pop(0)
             case "QUIT":
                 send_type = MessageType.DISCONNECT
                 command.pop(0)
-                break
             case default:
                 pass
         
         user_msg = " ".join(command)
-        print(user_msg)
+        print("user message: " + user_msg)
 
         msg = Message(id=client_id, type=send_type, expected=MessageType.NONE, msg=user_msg)
-        print(msg.encode())
         wfile.write(msg.encode() + '\n') # DO NOT REMOVE THE NEW LINE CHARACTER OR ELSE IT WON'T SEND
         wfile.flush()
 
         if send_type == MessageType.DISCONNECT:
+            print("quitting")
             quit()
 #endregion
 
 def main():
+    # set username at start
+    print("Welcome to BEER, please enter a username to connect")
+    username = ""
+    while username == "":
+        username = input(">> ")
+
+
+
     # Set up connection
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
         s.connect((HOST, PORT))
@@ -130,6 +142,13 @@ def main():
         receiver = threading.Thread(target=receive_messages, args=[rfile])
         receiver.daemon = True # should be repalced with a cleaner exit if needed
         receiver.start()
+
+        while True:
+            if client_id != None:
+                msg = Message(id=client_id, type=MessageType.CONNECT, expected=MessageType.NONE, msg=username)
+                wfile.write(msg.encode() + '\n')
+                wfile.flush()
+                break
 
         # Main thread handles sending user input
         try:

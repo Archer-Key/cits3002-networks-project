@@ -41,6 +41,7 @@ class Client:
         self.id = None
         self.type = ClientType.SPECTATOR
         self.timeout = None
+        self.username = ""
     def set_spectator(self):
         self.type = ClientType.SPECTATOR
     def set_player(self):
@@ -69,18 +70,22 @@ class Timer:
 
         self.start_timer_thread(duration, client)
     
-    def timer(self, duration, client):
+    def timeout(self, duration, client):
         print(f"[INFO] Starting timeout timer for Client [{client.id}]")
         time.sleep(duration)
         if self.active:
             print(f"[INFO] Client [{self.client.id}] has timed out")
-            game.handle_player_timeout(game.get_player(self.client.id))
-
+            handle_disconnect(client)
+    
     def start_timer_thread(self, duration, client):
-        thread = threading.Thread(target=self.timer, args=(duration, client,))
+        thread = threading.Thread(target=self.timeout, args=(duration, client,))
         thread.start()
         self.thread = thread
         return thread
+
+def end_game(game):
+    print("ending game")
+    game.state = GameState.END
 
 #endregion
 
@@ -97,23 +102,66 @@ def handle_client(client):
         id_msg = Message(id=SERVER_ID, type=MessageType.CONNECT, expected=MessageType.CHAT, msg=client.id)
         send_message_to(client, id_msg.encode())
 
+        # wait to recieve client username
+        while client.username == "":
+            try:
+                raw = rfile.readline()
+            except:
+                pass
+            msg = Message.decode(raw)
+            ## should be the first message the server recieves from the client
+            if msg.type == MessageType.CONNECT:
+                client.username = msg.msg
+        
+        # check if clients username matchs disconnection
+        reconnecting_player = False
+
+        if game.disconnected_player:
+            if client.username == game.disconnected_player.username:
+                print(f"reconnecting client {client.username}")
+                game.players[game.disconnected_player_id].client = client
+                reconnecting_player = True
+
         # send client a message indicating their status
         if game.state == GameState.WAIT:
             game.send_waiting_message(client)
         elif game.state in (GameState.PLACE, GameState.BATTLE):
-            spec_msg = Message(SERVER_ID, MessageType.TEXT, MessageType.CHAT, "YOU CURRENTLY SPECTATING")
+            spec_msg = Message(SERVER_ID, MessageType.TEXT, MessageType.CHAT, "YOU ARE CURRENTLY SPECTATING")
             send_message_to(client, spec_msg.encode())
+        elif game.state == GameState.PAUSE:
+            if reconnecting_player:
+                game.state = game.previous_state
+                print(f"[INFO] player has reconnected and game is resuming to state [{game.state}]")
+                rec_msg = Message(SERVER_ID, MessageType.TEXT, MessageType.CHAT, f"Welcome back {client.username}, the game will now resume")
+                send_message_to(client, rec_msg.encode())
+                res_msg = Message(SERVER_ID, MessageType.TEXT, MessageType.CHAT, f"Player has reconnected, resuming game")
+                send_message_to_all(clients, res_msg.encode())
+                if game.state == GameState.BATTLE:
+                    for player in game.players:
+                        game.send_fire_prompt(player)
+                if game.state == GameState.PLACE:
+                    for player in game.players:
+                        game.send_place_prompt(player)
+                
+                game.disconnected_players -= 1
+                
+                game.end_thread.cancel()
+                
+            pass
         elif game.state == GameState.END:
             spec_msg = Message(SERVER_ID, MessageType.TEXT, MessageType.CHAT, "WAITING FOR NEW GAME TO START")
             send_message_to(client, spec_msg.encode())
+        
 
         # recieve messages from client
         while True:
             try:
                 raw = rfile.readline()
-            except:
-                break ## player disconnected
+            except ConnectionResetError or ConnectionAbortedError:
+                # player disconnected
+                break
 
+            ## not sure if this is needed anymore
             if not raw:
                 break
             
@@ -128,6 +176,8 @@ def handle_client(client):
             try:
                 msg = Message.decode(raw)
 
+                ## Handles inputs out side of game world
+
                 if msg.type == MessageType.CHAT:
                     handle_chat(client, msg)
                     continue
@@ -139,12 +189,12 @@ def handle_client(client):
                 if client.type == ClientType.SPECTATOR:
                     res = Message(SERVER_ID, MessageType.TEXT, MessageType.CHAT, "Incorrect message type.")
                     send_message_to(client, res.encode())
-                    continue
 
                 player = game.get_player(msg.id)
                 if player == None:
                     raise ValueError # a different type of error is probably better here
                 
+                # inputs during gameplay
                 if game.state == GameState.WAIT:
                     game.send_waiting_message(client)
                     
@@ -197,6 +247,7 @@ class GameState(Enum):
     PLACE = 1
     BATTLE = 2
     END = 3
+    PAUSE = 4
 
 class Game:
     def __init__(self):
@@ -205,7 +256,13 @@ class Game:
     def new_game(self):
         self.state = GameState.WAIT
         self.players = [Player(0), Player(1)]
+        self.previous_state = GameState.WAIT
+        self.disconnected_player = None
+        self.disconnected_player_id = 0
+        self.disconnected_players = 0
+        self.disconnect_time = None
         self.player_turn = None
+        self.end_thread = None
 #endregion
 
 #region Player Handling
@@ -244,17 +301,19 @@ class Game:
     Get a player object from a client id, returns none if client id does not link to a player.
     """
     def get_player(self, client_id):
-        client_ids = [self.players[0].client.id, self.players[1].client.id]
-        try:
-            index = client_ids.index(client_id)
-            return self.players[index]
-        except ValueError:
-            return None
+        for player in self.players:
+            if player.client != None and player.client.id == client_id:
+                return player
+            
+        return None
         
     def remove_player(self, client):
         for player in self.players:
             if player.client == client:
-                self.players.remove(player)
+                player.client = None
+                self.disconnected_player = client
+                self.disconnected_player_id = player.id
+                self.disconnected_players += 1
     
     """
     Return the opponent of player.
@@ -337,14 +396,16 @@ class Game:
     """
     def announce_to_players(self, msg):
         for player in self.players:
-            send_message_to(player.client, msg)
+            if player.client != None:
+                send_message_to(player.client, msg)
     """
     Send a message to all spectators.
     """
     def announce_to_spectators(self, msg):
         playerids = []
         for player in self.players:
-            playerids.append(player.client.id)
+            if player.client:
+                playerids.append(player.client.id)
         for client in clients:
             if (client.id not in playerids):
                 send_message_to(client, msg)
@@ -534,6 +595,39 @@ class Game:
 #endregion
 
 #region Run Game
+
+    # seperate functions for each stage to make it easier to pause and resume
+    def placing_stage(self):
+        # Start placing phase
+        self.send_place_prompt(self.players[0])
+        self.send_place_prompt(self.players[1])
+        
+        # Wait for players to place all ships
+        while((self.players[0].ships_placed < 5 or self.players[1].ships_placed < 5) and (self.state == GameState.PLACE or self.state == GameState.PAUSE)):
+            time.sleep(1)
+
+        return True
+    
+    def start_battle(self):
+        battle_msg = Message(SERVER_ID, MessageType.TEXT, MessageType.FIRE, "BATTLE STARTING")
+        self.announce_to_players(battle_msg.encode())
+        self.player_turn = randint(0,1)
+        # Send prompt to player who's turn is first and wait to other player
+        self.send_fire_prompt(self.players[self.player_turn])
+        wait_msg = Message(SERVER_ID, MessageType.TEXT, MessageType.FIRE, "Waiting for opponent...")
+        send_message_to(self.players[1 - self.player_turn].client, wait_msg.encode())
+
+    def battle_stage(self):
+        if (self.players[0].board.all_ships_sunk()):
+            winner = self.players[1]
+            loser = self.players[0]
+            return winner, loser
+        elif (self.players[1].board.all_ships_sunk()):
+            winner = self.players[0]
+            loser = self.players[1]
+            return winner, loser
+        return None, None
+
     def play_game(self):
         self.new_game()
         
@@ -553,47 +647,31 @@ class Game:
         msg = Message(SERVER_ID, MessageType.TEXT, MessageType.CHAT, f"YOU ARE A SPECTATOR")
         self.announce_to_spectators(msg.encode())
 
-        # Start placing phase
-        self.send_place_prompt(self.players[0])
-        self.send_place_prompt(self.players[1])
+        self.placing_stage()
         
-        # Wait for players to place all ships
-        while((self.players[0].ships_placed < 5 or self.players[1].ships_placed < 5) and self.state == GameState.PLACE):
-            time.sleep(1)
         if self.state != GameState.END:
             self.state = GameState.BATTLE
 
         # Start battle
         if self.state == GameState.BATTLE:
-            battle_msg = Message(SERVER_ID, MessageType.TEXT, MessageType.FIRE, "BATTLE STARTING")
-            self.announce_to_players(battle_msg.encode())
-            self.player_turn = randint(0,1)
-            # Send prompt to player who's turn is first and wait to other player
-            self.send_fire_prompt(self.players[self.player_turn])
-            wait_msg = Message(SERVER_ID, MessageType.TEXT, MessageType.FIRE, "Waiting for opponent...")
-            send_message_to(self.players[1 - self.player_turn].client, wait_msg.encode())
+            self.start_battle()
 
         # Wait for battle to end
         winner = None
         loser = None
-        while self.state == GameState.BATTLE:
-            if (self.players[0].board.all_ships_sunk()):
-                winner = self.players[1]
-                loser = self.players[0]
-                break
-            elif (self.players[1].board.all_ships_sunk()):
-                winner = self.players[0]
-                loser = self.players[1]
-                break
+        while (self.state == GameState.BATTLE or self.state == GameState.PAUSE) and winner == None:
+            winner, loser = self.battle_stage()
             time.sleep(1)
+        
         self.state = GameState.END
         
         # End game
         end_msg = Message(SERVER_ID, MessageType.TEXT, MessageType.CHAT, "GAME OVER")
         self.announce_to_players(end_msg.encode())
         
-        # Send win message
         if winner:
+            # Game finished with a player winning
+            # Send win message
             win_msg = Message(SERVER_ID, MessageType.TEXT, MessageType.CHAT, "YOU WIN!!!")
             send_message_to(winner.client, win_msg.encode())
             win_stats_msg = Message(SERVER_ID, MessageType.TEXT, MessageType.CHAT, f"You won in {winner.moves} moves!")
@@ -606,14 +684,6 @@ class Game:
             # Announce to spectators
             spec_msg = Message(SERVER_ID, MessageType.TEXT, MessageType.CHAT, f"GAME OVER! PLAYER {winner.id} WINS!")
             self.announce_to_spectators(spec_msg.encode())
-        else:
-            # player quit or disconnected
-
-            # Announce to spectators
-            spec_msg = Message(SERVER_ID, MessageType.TEXT, MessageType.CHAT, f"A Player has left the game.")
-            self.announce_to_spectators(spec_msg.encode())
-
-            pass
 
         self.game_number += 1
 
@@ -633,15 +703,33 @@ game_manager = None
 #endregion
 
 #region Connections
-def handle_disconnect(client):
+def handle_disconnect(client : Client):
+    ## it looks like this is firing twice, not sure why, have to look into it
     print(f"[INFO] Client [{client.id}] disconnected.")
+
     if client.timeout:
         client.timeout.active = False
     if client in clients:
         clients.remove(client)
     game.remove_player(client)
+
     client.conn.close()
-    game.state = GameState.END
+
+    ## check if all players have disconnected and end game
+    if game.disconnected_players >= 2:
+        game.state = GameState.END
+        return
+
+    if game.state != GameState.PAUSE:
+        game.previous_state = game.state
+
+    game.state = GameState.PAUSE
+    game.end_thread = threading.Timer(6, end_game, args=(game,))
+    game.end_thread.start()
+
+    msg = Message(SERVER_ID, MessageType.TEXT, MessageType.CHAT, f"[INFO] player [{client.id}] has disconnected, waiting for reconnect")
+    game.announce_to_players(msg.encode())
+
 
 def close_all_connections():
     for client in clients:

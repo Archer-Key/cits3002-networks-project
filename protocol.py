@@ -10,6 +10,7 @@ class MessageType(Enum):
   FIRE = 6 # Message type for player to fire at coordinates during the battle section.
   RESULT = 7 # Acknowledges result of player's fire attempt.
   DISCONNECT = 8 # Tells the server a player is disconnecting
+  USERNAME = 9
 
 class Message:
   # Stucture of a basic message to send over the socket.
