@@ -35,7 +35,6 @@ class Client:
     def __init__(self, conn, addr):
         self.conn = conn
         self.addr = addr
-        print(self.conn, self.addr)
         self.thread = None
         self.rfile = None
         self.wfile = None
@@ -43,14 +42,17 @@ class Client:
         self.type = ClientType.SPECTATOR
         self.timeout = None
         self.username = ""
+        self.seq = 0
+        self.expected_seq
     def set_spectator(self):
         self.type = ClientType.SPECTATOR
     def set_player(self):
         self.type = ClientType.PLAYER
 
 def send_message_to(client, msg):
-    client.wfile.write(msg + "\n") #DO NOT REMOVE THE NEW LINE CHARCTER OR ELSE IT WON'T SEND
-    client.wfile.flush()
+    #client.wfile.write(msg + "\n") #DO NOT REMOVE THE NEW LINE CHARCTER OR ELSE IT WON'T SEND
+    #client.wfile.flush()
+    client.send(msg)
 
 def send_message_to_all(clients, msg):
     for client in clients:

@@ -18,9 +18,6 @@ client_id = None
 expected_response = MessageType.CHAT
 username = ""
 
-seqno = 0
-exp_seq = 0
-
 #region Recieve
 def receive_messages(rfile):
     # These two have to be here otherwise they don't work properly when referenced
