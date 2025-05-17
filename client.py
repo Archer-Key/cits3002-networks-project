@@ -49,7 +49,7 @@ def receive_messages(rfile):
                 print(f"[{msg.id}] {msg.msg}")
             
             elif type == MessageType.CHAT:
-                pass
+                print(msg.msg)
             
             elif type == MessageType.BOARD:
                 # Begin reading board lines
@@ -87,10 +87,7 @@ def send_messages(wfile):
 
         ## handle word inputs to decided type then check mismatch at recieve
         command = user_input.split(" ")
-        print(command)
-
         send_type = expected_response
-        print(expected_response)
 
         match command[0].upper():
             case "FIRE":
@@ -112,14 +109,13 @@ def send_messages(wfile):
                 pass
         
         user_msg = " ".join(command)
-        print("user message: " + user_msg)
 
         msg = Message(id=client_id, type=send_type, expected=MessageType.NONE, msg=user_msg)
         wfile.write(msg.encode() + '\n') # DO NOT REMOVE THE NEW LINE CHARACTER OR ELSE IT WON'T SEND
         wfile.flush()
 
         if send_type == MessageType.DISCONNECT:
-            print("quitting")
+            print("[INFO]: Disconnecting")
             quit()
 #endregion
 

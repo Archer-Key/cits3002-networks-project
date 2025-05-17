@@ -55,8 +55,10 @@ def send_message_to_all(clients, msg):
     for client in clients:
         send_message_to(client, msg)
 
-def handle_chat(client, msg):
-    pass
+def handle_chat(client, text):
+    msg = Message(SERVER_ID, MessageType.CHAT, MessageType.CHAT, "[" + client.username + "]: " + text)
+    ## send message to all except person sending
+    send_message_to_all([x for x in clients if x!= client], msg.encode())
 #endregion
 
 #region Timeout
@@ -75,6 +77,8 @@ class Timer:
         time.sleep(duration)
         if self.active:
             print(f"[INFO] Client [{self.client.id}] has timed out")
+            msg = Message(SERVER_ID, MessageType.TEXT, MessageType.NONE, "[INFO] You have timed out")
+            send_message_to(client, msg.encode())
             handle_disconnect(client)
     
     def start_timer_thread(self, duration, client):
@@ -179,7 +183,7 @@ def handle_client(client):
                 ## Handles inputs out side of game world
 
                 if msg.type == MessageType.CHAT:
-                    handle_chat(client, msg)
+                    handle_chat(client, msg.msg)
                     continue
 
                 elif msg.type == MessageType.DISCONNECT:
@@ -724,7 +728,7 @@ def handle_disconnect(client : Client):
         game.previous_state = game.state
 
     game.state = GameState.PAUSE
-    game.end_thread = threading.Timer(6, end_game, args=(game,))
+    game.end_thread = threading.Timer(30, end_game, args=(game,))
     game.end_thread.start()
 
     msg = Message(SERVER_ID, MessageType.TEXT, MessageType.CHAT, f"[INFO] player [{client.id}] has disconnected, waiting for reconnect")
