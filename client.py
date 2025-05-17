@@ -18,6 +18,9 @@ client_id = None
 expected_response = MessageType.CHAT
 username = ""
 
+seqno = 0
+exp_seq = 0
+
 #region Recieve
 def receive_messages(rfile):
     # These two have to be here otherwise they don't work properly when referenced
@@ -123,14 +126,13 @@ def send_messages(wfile):
             quit()
 #endregion
 
+#region Connect
 def main():
     # set username at start
     print("Welcome to BEER, please enter a username to connect")
     username = ""
     while username == "":
         username = input(">> ")
-
-
 
     # Set up connection
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
@@ -159,6 +161,7 @@ def main():
             print(msg.encode())
             wfile.write(msg.encode() + '\n')
             wfile.flush()
+#endregion
 
 if __name__ == "__main__":
     main()
