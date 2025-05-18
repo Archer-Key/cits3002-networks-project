@@ -11,6 +11,7 @@ HOST = '127.0.0.1'
 PORT = 5000
 
 import threading
+import os
 
 from protocol import *
 
@@ -67,7 +68,7 @@ def receive_messages(rfile):
             
             elif type == MessageType.DISCONNECT:
                 print("[INFO] you have been disconnected from the server")
-                quit()
+                os._exit(1)
             
             else:
                 # client shouldn't receive a FIRE or NONE message
@@ -115,7 +116,7 @@ def send_messages(wfile):
         wfile.flush()
 
         if send_type == MessageType.DISCONNECT:
-            print("[INFO]: Disconnecting")
+            print("[INFO] Disconnecting")
             quit()
 #endregion
 
@@ -125,8 +126,6 @@ def main():
     username = ""
     while username == "":
         username = input(">> ")
-
-
 
     # Set up connection
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:

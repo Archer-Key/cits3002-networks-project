@@ -150,6 +150,7 @@ def handle_client(client):
                 game.disconnected_players -= 1
                 
                 game.end_thread.cancel()
+                game.end_thread = None
                 
             pass
         elif game.state == GameState.END:
@@ -184,10 +185,6 @@ def handle_client(client):
 
                 if msg.type == MessageType.CHAT:
                     handle_chat(client, msg.msg)
-                    continue
-
-                elif msg.type == MessageType.DISCONNECT:
-                    handle_disconnect(client)
                     continue
                 
                 if client.type == ClientType.SPECTATOR:
@@ -266,6 +263,8 @@ class Game:
         self.disconnected_players = 0
         self.disconnect_time = None
         self.player_turn = None
+        if self.end_thread:
+            self.end_thread.cancel()
         self.end_thread = None
 #endregion
 
@@ -717,6 +716,11 @@ def handle_disconnect(client : Client):
         clients.remove(client)
     game.remove_player(client)
 
+    try:
+        msg = Message(SERVER_ID, MessageType.DISCONNECT, MessageType.NONE, "disconnected")
+        send_message_to(client, msg.encode())
+    except:
+        pass
     client.conn.close()
 
     ## check if all players have disconnected and end game
@@ -728,6 +732,8 @@ def handle_disconnect(client : Client):
         game.previous_state = game.state
 
     game.state = GameState.PAUSE
+    if game.end_thread:
+        return
     game.end_thread = threading.Timer(30, end_game, args=(game,))
     game.end_thread.start()
 
