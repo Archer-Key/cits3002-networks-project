@@ -1,5 +1,7 @@
 from enum import Enum
 
+BUFSIZE = 516
+
 def invert_bit_order(num):
   out = 0
   for i in range(0,8):
@@ -51,13 +53,13 @@ class MessageType(Enum):
 
 class Message:
   # Stucture of a basic message to send over the socket.
-  def __init__(self, seq, id, type, expected, msg="", packet_type=PacketType.DATA):
+  def __init__(self, id, type, expected, msg="", seq=0, packet_type=PacketType.DATA):
     self.seq = seq
     self.packet_type = packet_type # Packet type (2 bits)
     self.type = type # Type of the message being sent
     self.expected = expected # Type of message sender expects to receive, set NONE for no resposne
     self.id = id 
-    self.msg = msg 
+    self.msg = str(msg)
 
   def encode(self):
     head = bytearray()
@@ -79,7 +81,6 @@ class Message:
     crc = pack[pack_len-4:]
     expected_crc = bytes(crc32(data))
     if (crc == expected_crc):
-      print("No error detected")
       seq = data[0]<<8 + data[1]
       id = data[2]
       packet_type = PacketType((data[3]&(3<<6))>>6)
@@ -87,8 +88,8 @@ class Message:
       expected_type = MessageType(data[3]&(7))
       msg = ""
       if len(data) >= 4:
-        msg = data[4:]
-      return Message(seq, id, message_type, expected_type, msg, packet_type)
+        msg = data[4:].decode("utf-8")
+      return Message(id=id, type=message_type, expected=expected_type, msg=msg, seq=seq, packet_type=packet_type)
     else:
       print("Error detected")
       return False

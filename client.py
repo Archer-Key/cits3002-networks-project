@@ -19,7 +19,7 @@ expected_response = MessageType.CHAT
 username = ""
 
 #region Recieve
-def receive_messages(rfile):
+def receive_messages(s):
     # These two have to be here otherwise they don't work properly when referenced
     global client_id
     global expected_response
@@ -27,23 +27,20 @@ def receive_messages(rfile):
     """Continuously receive and display messages from the server"""
     while (True):
         # Read from server
-        line = rfile.readline()
+        line = s.recv(BUFSIZE)
         if not line:
             print("[INFO] Server disconnected.")
             break
         
-        line.strip()
-        #print("RECIEVED: " + line) # For debugging/testing
         try:
             msg = Message.decode(line)
-
-            #print(f"DECODED: {msg.id} {msg.type} {msg.expected} {msg.msg}\n") # For debugging/testing
+            #print(f"DEBUG: seq: {msg.seq}, pck_t: {msg.packet_type}, type: {msg.type}, expected: {msg.expected}, id: {msg.id}, msg: {msg.msg}")
             
             expected_response = msg.expected
             
             type = msg.type
             if type == MessageType.CONNECT:
-                client_id = msg.msg
+                client_id = int(msg.msg)
 
             elif type == MessageType.TEXT:
                 print(f"[{msg.id}] {msg.msg}")
@@ -74,14 +71,14 @@ def receive_messages(rfile):
                 # should probably send a NACK or something
                 print("Error unexpected message type")
 
-        except ValueError:
+        except ValueError as e:
             # needs to be handled better
-            print("Failure decoding message, ignoring")
+            print(f"Failure decoding message, ignoring {e}")
             pass
 #endregion
 
 #region Send
-def send_messages(wfile):
+def send_messages(s):
     while(True):
         user_input = input(">> ")
 
@@ -114,9 +111,8 @@ def send_messages(wfile):
         user_msg = " ".join(command)
         print("user message: " + user_msg)
 
-        msg = Message(id=client_id, type=send_type, expected=MessageType.NONE, msg=user_msg)
-        wfile.write(msg.encode() + '\n') # DO NOT REMOVE THE NEW LINE CHARACTER OR ELSE IT WON'T SEND
-        wfile.flush()
+        msg = Message(id=client_id, type=send_type, expected=MessageType.TEXT, msg=user_msg)
+        s.send(msg.encode())
 
         if send_type == MessageType.DISCONNECT:
             print("quitting")
@@ -134,30 +130,26 @@ def main():
     # Set up connection
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
         s.connect((HOST, PORT))
-        rfile = s.makefile('r')
-        wfile = s.makefile('w')
         
         # Start a thread for receiving messages
-        receiver = threading.Thread(target=receive_messages, args=[rfile])
+        receiver = threading.Thread(target=receive_messages, args=[s])
         receiver.daemon = True # should be repalced with a cleaner exit if needed
         receiver.start()
 
         while True:
             if client_id != None:
-                msg = Message(id=client_id, type=MessageType.CONNECT, expected=MessageType.NONE, msg=username)
-                wfile.write(msg.encode() + '\n')
-                wfile.flush()
+                msg = Message(id=client_id, type=MessageType.CONNECT, expected=MessageType.TEXT, msg=username)
+                s.send(msg.encode())
                 break
 
         # Main thread handles sending user input
         try:
-            send_messages(wfile)
+            send_messages(s)
         except KeyboardInterrupt:
             print("\n[INFO] Client exiting.")
-            msg = Message(id=client_id, type=MessageType.DISCONNECT, expected=MessageType.NONE, msg=client_id)
+            msg = Message(id=client_id, type=MessageType.DISCONNECT, expected=MessageType.TEXT, msg=client_id)
             print(msg.encode())
-            wfile.write(msg.encode() + '\n')
-            wfile.flush()
+            s.send(msg)
 #endregion
 
 if __name__ == "__main__":

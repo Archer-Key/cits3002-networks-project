@@ -36,23 +36,18 @@ class Client:
         self.conn = conn
         self.addr = addr
         self.thread = None
-        self.rfile = None
-        self.wfile = None
         self.id = None
         self.type = ClientType.SPECTATOR
         self.timeout = None
         self.username = ""
-        self.seq = 0
-        self.expected_seq
     def set_spectator(self):
         self.type = ClientType.SPECTATOR
     def set_player(self):
         self.type = ClientType.PLAYER
 
 def send_message_to(client, msg):
-    #client.wfile.write(msg + "\n") #DO NOT REMOVE THE NEW LINE CHARCTER OR ELSE IT WON'T SEND
-    #client.wfile.flush()
-    client.send(msg)
+    # TODO: add client seqno
+    client.conn.send(msg.encode()) 
 
 def send_message_to_all(clients, msg):
     for client in clients:
@@ -96,19 +91,14 @@ def end_game(game):
 def handle_client(client):
     socket = client.conn
     with socket:
-        rfile = socket.makefile('r')
-        wfile = socket.makefile('w')
-        client.rfile = rfile
-        client.wfile = wfile
-
         # send client their client ID
         id_msg = Message(id=SERVER_ID, type=MessageType.CONNECT, expected=MessageType.CHAT, msg=client.id)
-        send_message_to(client, id_msg.encode())
+        send_message_to(client, id_msg)
 
         # wait to recieve client username
         while client.username == "":
             try:
-                raw = rfile.readline()
+                raw = socket.recv(BUFSIZE)
             except:
                 pass
             msg = Message.decode(raw)
@@ -130,15 +120,15 @@ def handle_client(client):
             game.send_waiting_message(client)
         elif game.state in (GameState.PLACE, GameState.BATTLE):
             spec_msg = Message(SERVER_ID, MessageType.TEXT, MessageType.CHAT, "YOU ARE CURRENTLY SPECTATING")
-            send_message_to(client, spec_msg.encode())
+            send_message_to(client, spec_msg)
         elif game.state == GameState.PAUSE:
             if reconnecting_player:
                 game.state = game.previous_state
                 print(f"[INFO] player has reconnected and game is resuming to state [{game.state}]")
                 rec_msg = Message(SERVER_ID, MessageType.TEXT, MessageType.CHAT, f"Welcome back {client.username}, the game will now resume")
-                send_message_to(client, rec_msg.encode())
+                send_message_to(client, rec_msg)
                 res_msg = Message(SERVER_ID, MessageType.TEXT, MessageType.CHAT, f"Player has reconnected, resuming game")
-                send_message_to_all(clients, res_msg.encode())
+                send_message_to_all(clients, res_msg)
                 if game.state == GameState.BATTLE:
                     for player in game.players:
                         game.send_fire_prompt(player)
@@ -153,13 +143,13 @@ def handle_client(client):
             pass
         elif game.state == GameState.END:
             spec_msg = Message(SERVER_ID, MessageType.TEXT, MessageType.CHAT, "WAITING FOR NEW GAME TO START")
-            send_message_to(client, spec_msg.encode())
+            send_message_to(client, spec_msg)
         
 
         # recieve messages from client
         while True:
             try:
-                raw = rfile.readline()
+                raw = client.conn.recv(BUFSIZE)
             except ConnectionResetError or ConnectionAbortedError:
                 # player disconnected
                 break
@@ -167,8 +157,6 @@ def handle_client(client):
             ## not sure if this is needed anymore
             if not raw:
                 break
-            
-            print("RECIEVED: " + raw)
 
             ## start timeout timer for players
             if client.type == ClientType.PLAYER:
@@ -191,7 +179,7 @@ def handle_client(client):
                 
                 if client.type == ClientType.SPECTATOR:
                     res = Message(SERVER_ID, MessageType.TEXT, MessageType.CHAT, "Incorrect message type.")
-                    send_message_to(client, res.encode())
+                    send_message_to(client, res)
 
                 player = game.get_player(msg.id)
                 if player == None:
@@ -207,19 +195,19 @@ def handle_client(client):
                         game.place_ship(client.id, msg.msg)
                     else:
                         res = Message(SERVER_ID, MessageType.TEXT, MessageType.NONE, "Incorrect Command Type")
-                        send_message_to(client, res.encode())
+                        send_message_to(client, res)
                         
                 elif game.state == GameState.BATTLE:
                     if msg.type == MessageType.FIRE:
                         game.fire(client.id, msg.msg)
                     else:
                         res = Message(SERVER_ID, MessageType.TEXT, MessageType.NONE, "Incorrect Command Type")
-                        send_message_to(client, res.encode())
+                        send_message_to(client, res)
 
                 elif game.state == GameState.END:
                     res = Message(SERVER_ID, MessageType.TEXT, MessageType.CHAT,\
                                   "Game has ended. Thank you for playing!")
-                    send_message_to(client, res.encode())
+                    send_message_to(client, res)
 
                 else:
                     print("Error, game is in an unknown state.")
@@ -279,7 +267,7 @@ class Game:
         client.set_spectator()
         if (send_msg):
             msg = Message(SERVER_ID, MessageType.TEXT, MessageType.CHAT, f"YOU ARE A SPECTATOR")
-            send_message_to(client, msg.encode())
+            send_message_to(client, msg)
 
     """
     Set a client as a player.
@@ -288,7 +276,7 @@ class Game:
         client.set_player()
         self.players[player_id].client = client
         msg = Message(SERVER_ID, MessageType.TEXT, MessageType.CHAT, f"YOU ARE PLAYER {player_id}")
-        send_message_to(client, msg.encode())
+        send_message_to(client, msg)
 
     """
     Decide on the next two players and set them as players.
@@ -335,10 +323,10 @@ class Game:
     """
     def handle_player_quit(self, player):
         msg = Message(SERVER_ID, MessageType.TEXT, MessageType.CHAT, "Thanks for playing!")
-        send_message_to(player.client, msg.encode())
+        send_message_to(player.client, msg)
         
         msg = Message(SERVER_ID, MessageType.TEXT, MessageType.CHAT, "Other player has decided to quit. Thanks for playing!")
-        send_message_to(self.get_opponent(player).client, msg.encode())
+        send_message_to(self.get_opponent(player).client, msg)
         
         self.state = GameState.END
         close_all_connections()
@@ -348,10 +336,10 @@ class Game:
     """
     def handle_player_timeout(self, player):
         msg = Message(SERVER_ID, MessageType.TEXT, MessageType.CHAT, "You have taken to long to make a move")
-        send_message_to(player.client, msg.encode())
+        send_message_to(player.client, msg)
         
         msg = Message(SERVER_ID, MessageType.TEXT, MessageType.CHAT, "Other player has timed out. Thanks for playing!")
-        send_message_to(self.get_opponent(player).client, msg.encode())
+        send_message_to(self.get_opponent(player).client, msg)
         
         self.state = GameState.END
         close_all_connections()
@@ -365,7 +353,7 @@ class Game:
         num_clients = len(clients)
         res = Message(SERVER_ID, MessageType.TEXT, MessageType.CHAT,\
                       f"Waiting for game to start... Clients connected [{num_clients}/2]")
-        send_message_to(client, res.encode())
+        send_message_to(client, res)
 
     """
     Convert a board into a sendable string.
@@ -389,10 +377,10 @@ class Game:
         client = to_player.client
         board_msg = self.board_to_str(board, show_hidden)
         msg = Message(SERVER_ID, MessageType.BOARD, MessageType.PLACE, board_msg)
-        send_message_to(client, msg.encode())
+        send_message_to(client, msg)
         if self.state == GameState.BATTLE:
             spec_msg = Message(SERVER_ID, MessageType.BOARD, MessageType.CHAT, board_msg)
-            self.announce_to_spectators(spec_msg.encode())
+            self.announce_to_spectators(spec_msg)
     
     """
     Send a message to both players.
@@ -429,7 +417,7 @@ class Game:
         if (player.ships_placed >= 5):
             self.send_board(player, player.board, show_hidden=True)
             msg = Message(SERVER_ID, MessageType.TEXT, MessageType.CHAT, "All ships placed. Waiting for opponent...")
-            send_message_to(player.client, msg.encode())
+            send_message_to(player.client, msg)
             return
 
         self.send_board(player, player.board, show_hidden=True)
@@ -438,7 +426,7 @@ class Game:
         
         prompt_msg = f"Place {ship_name} (Size: {ship_size}) {self.orientation_str(orientation)}. Enter 'x' to change orientation."
         msg = Message(SERVER_ID, MessageType.TEXT, MessageType.PLACE, prompt_msg)
-        send_message_to(player.client, msg.encode())
+        send_message_to(player.client, msg)
 
     """
     Attempts to place a ship in the coordinates provided.
@@ -457,7 +445,7 @@ class Game:
 
         if (player.ships_placed >= 5):
             msg = Message(SERVER_ID, MessageType.TEXT, MessageType.CHAT, "All ships placed. Waiting for opponent...")
-            send_message_to(player.client, msg.encode())
+            send_message_to(player.client, msg)
             return
         
         # Get coordinates from message
@@ -472,7 +460,7 @@ class Game:
             row, col = parse_coordinate(coords)
         except ValueError as e:
             msg = Message(SERVER_ID, MessageType.TEXT, MessageType.PLACE, f"[!] Invalid coordinate: {e}")
-            send_message_to(player.client, msg.encode())
+            send_message_to(player.client, msg)
             self.send_place_prompt(player)
             return
         
@@ -485,7 +473,7 @@ class Game:
             })
             player.ships_placed += 1
             spec_msg = Message(SERVER_ID, MessageType.TEXT, MessageType.CHAT, f"PLAYER {player.id} PLACED THEIR {ship_name}")
-            self.announce_to_spectators(spec_msg.encode())
+            self.announce_to_spectators(spec_msg)
         else:
             msg = Message(SERVER_ID, MessageType.TEXT, MessageType.PLACE,\
             f"[!] Cannot place {ship_name} at {coords} (orientation={self.orientation_str(orientation)}). Try again.")
@@ -516,9 +504,9 @@ class Game:
         # Prompt the player to fire
         msg = Message(SERVER_ID, MessageType.TEXT, MessageType.FIRE,\
                       f"Enter coordinate to fire at (e.g. B5): ")
-        send_message_to(player.client, msg.encode())
+        send_message_to(player.client, msg)
         spec_msg = Message(SERVER_ID, MessageType.TEXT, MessageType.CHAT, f"PLAYER {player.id} FIRING")
-        self.announce_to_spectators(spec_msg.encode())
+        self.announce_to_spectators(spec_msg)
     
     """
     Attempts to fire at a tile of the opponents board.
@@ -542,7 +530,7 @@ class Game:
         if (player.id != self.player_turn):
             msg = Message(SERVER_ID, MessageType.TEXT, MessageType.FIRE,\
                           "Fired out turn, command ignored. Waiting for opponent to fire...")
-            send_message_to(player.client, msg.encode())
+            send_message_to(player.client, msg)
             return
         
         opponent = self.get_opponent(player)
@@ -556,7 +544,7 @@ class Game:
             if result == "already_shot":
                 msg = Message(SERVER_ID, MessageType.RESULT, MessageType.FIRE,\
                               "REPEAT You've already fired at that location.")
-                send_message_to(player.client, msg.encode())
+                send_message_to(player.client, msg)
                 self.send_fire_prompt(player)
                 return
             
@@ -581,19 +569,19 @@ class Game:
             # Send result to player
             self.send_board(player, opponent.board)
             res_msg = Message(SERVER_ID, MessageType.RESULT, MessageType.FIRE, res_txt)
-            send_message_to(player.client, res_msg.encode())
+            send_message_to(player.client, res_msg)
             # Send result to opponent
             opp_msg = Message(SERVER_ID, MessageType.RESULT, MessageType.FIRE, opp_txt)
-            send_message_to(opponent.client, opp_msg.encode())
+            send_message_to(opponent.client, opp_msg)
             # Announce result to spectators
             spec_msg = Message(SERVER_ID, MessageType.TEXT, MessageType.CHAT, spec_txt)
-            self.announce_to_spectators(spec_msg.encode())
+            self.announce_to_spectators(spec_msg)
             # End turn
             self.end_player_turn(player)
         
         except ValueError as e:
             msg = Message(SERVER_ID, MessageType.TEXT, MessageType.FIRE, f"Invalid input: {e}")
-            send_message_to(player.client, msg.encode())
+            send_message_to(player.client, msg)
             self.send_fire_prompt(player)
 #endregion
 
@@ -613,12 +601,12 @@ class Game:
     
     def start_battle(self):
         battle_msg = Message(SERVER_ID, MessageType.TEXT, MessageType.FIRE, "BATTLE STARTING")
-        self.announce_to_players(battle_msg.encode())
+        self.announce_to_players(battle_msg)
         self.player_turn = randint(0,1)
         # Send prompt to player who's turn is first and wait to other player
         self.send_fire_prompt(self.players[self.player_turn])
         wait_msg = Message(SERVER_ID, MessageType.TEXT, MessageType.FIRE, "Waiting for opponent...")
-        send_message_to(self.players[1 - self.player_turn].client, wait_msg.encode())
+        send_message_to(self.players[1 - self.player_turn].client, wait_msg)
 
     def battle_stage(self):
         if (self.players[0].board.all_ships_sunk()):
@@ -640,7 +628,7 @@ class Game:
         
         # Announce start
         start_msg = Message(SERVER_ID, MessageType.TEXT, MessageType.CHAT, "GAME STARTING")
-        send_message_to_all(clients, start_msg.encode())
+        send_message_to_all(clients, start_msg)
         self.state = GameState.PLACE
 
         # Announce players
@@ -648,7 +636,7 @@ class Game:
                 
         # Announce spectators
         msg = Message(SERVER_ID, MessageType.TEXT, MessageType.CHAT, f"YOU ARE A SPECTATOR")
-        self.announce_to_spectators(msg.encode())
+        self.announce_to_spectators(msg)
 
         self.placing_stage()
         
@@ -670,23 +658,23 @@ class Game:
         
         # End game
         end_msg = Message(SERVER_ID, MessageType.TEXT, MessageType.CHAT, "GAME OVER")
-        self.announce_to_players(end_msg.encode())
+        self.announce_to_players(end_msg)
         
         if winner:
             # Game finished with a player winning
             # Send win message
             win_msg = Message(SERVER_ID, MessageType.TEXT, MessageType.CHAT, "YOU WIN!!!")
-            send_message_to(winner.client, win_msg.encode())
+            send_message_to(winner.client, win_msg)
             win_stats_msg = Message(SERVER_ID, MessageType.TEXT, MessageType.CHAT, f"You won in {winner.moves} moves!")
-            send_message_to(winner.client, win_stats_msg.encode())
+            send_message_to(winner.client, win_stats_msg)
             
             # Send lose message
             loss_msg = Message(SERVER_ID, MessageType.TEXT, MessageType.CHAT, "You lose")
-            send_message_to(loser.client, loss_msg.encode())
+            send_message_to(loser.client, loss_msg)
 
             # Announce to spectators
             spec_msg = Message(SERVER_ID, MessageType.TEXT, MessageType.CHAT, f"GAME OVER! PLAYER {winner.id} WINS!")
-            self.announce_to_spectators(spec_msg.encode())
+            self.announce_to_spectators(spec_msg)
 
         self.game_number += 1
 
@@ -731,7 +719,7 @@ def handle_disconnect(client : Client):
     game.end_thread.start()
 
     msg = Message(SERVER_ID, MessageType.TEXT, MessageType.CHAT, f"[INFO] player [{client.id}] has disconnected, waiting for reconnect")
-    game.announce_to_players(msg.encode())
+    game.announce_to_players(msg)
 
 
 def close_all_connections():
