@@ -72,7 +72,7 @@ def send_ack(client, seq):
                            seq=seq, packet_type=PacketType.ACK)
     send_message_to(client, ack, False)
 
-def send_nack(client, seq):
+def send_nack(client):
     nack = Message(id=client.id, type=MessageType.TEXT, expected=MessageType.TEXT, msg="",\
                            seq=0, packet_type=PacketType.NACK)
     send_message_to(client, nack, False)
@@ -114,21 +114,27 @@ def end_game(game):
 #region Process Msg
 def process_client_messages(client):
     while True:
+        print(f"DEBUG: Messages to process {client.recv_window}")
         try:
             msg = heapq.heappop(client.recv_window)[1]
+            print(f"DEBUG PROCESSING: seq: {msg.seq}, pck_t: {msg.packet_type}, type: {msg.type}, expected: {msg.expected}, id: {msg.id}, msg_len: {msg.msg_len}, msg: {msg.msg}\n\n\n")
         except IndexError: # all messages sent
+            print(f"DEBUG: All messages processed")
             return
         
         if msg.seq < client.seq_r: # skip duplicates
+            print(f"DEBUG: Duplicate")
             continue
 
         if msg.seq > client.seq_r: # end if message is a future packet
+            print(f"DEBUG: Future")
             heapq.heappush(client.recv_window, (msg.seq, msg))
             send_ack(client, client.seq_r)
             return 
         
         # process the message
         try:
+            print(f"DEBUG: Processing message")
             try:
                 ## Handles inputs out side of game world
                 if msg.type == MessageType.CHAT:
@@ -179,7 +185,7 @@ def process_client_messages(client):
                 pass
           
             # all went well
-            seq_r += 1
+            client.seq_r += 1
 
         except ValueError as e:
             # needs to be handled better
@@ -290,14 +296,12 @@ def handle_client(client):
                                 break
                         continue
             
-                    if (msg.seq > client.seq_r): # queue future packets
+                    if (msg.seq >= client.seq_r): # queue future packets
                         heapq.heappush(client.recv_window, (msg.seq, msg))
                         continue
             
                     if (msg.seq < client.seq_r): #ignore already received packets
                         continue
-
-                    heapq.heappush(client.recv_window, (msg.seq, msg))
                 
                 except NotEnoughBytesError:
                     break

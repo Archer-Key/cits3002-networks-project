@@ -130,7 +130,6 @@ def receive_messages(s):
         while len(incoming) >= 9:
             try:
                 msg = Message.decode(incoming)
-                print(msg.seq, msg.msg)
                 incoming = incoming[9+msg.msg_len:]
 
                 if msg.packet_type == PacketType.ACK:
@@ -149,14 +148,13 @@ def receive_messages(s):
                             break
                     continue
                 
-                if (msg.seq > seq_r): # queue future packets
+                if (msg.seq >= seq_r): # queue future packets
                     heapq.heappush(recv_window, (msg.seq, msg))
                     continue
                 
                 if (msg.seq < seq_r): #ignore already received packets
                     continue
 
-                heapq.heappush(recv_window, (msg.seq, msg))
                 
             except NotEnoughBytesError:
                 break
@@ -250,7 +248,7 @@ def main():
         while True:
             if client_id != None:
                 msg = Message(id=client_id, type=MessageType.CONNECT, expected=MessageType.TEXT, msg=username)
-                send_msg(s, msg)
+                send_msg(s, msg, False)
                 break
 
         # Main thread handles sending user input
