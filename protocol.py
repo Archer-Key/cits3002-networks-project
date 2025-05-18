@@ -102,7 +102,7 @@ class Message:
       raise NotEnoughBytesError
 
     crc = data[0:4]
-    seq = data[4]<<8 + data[5]
+    seq = (data[4]<<8) + data[5]
     packet_type = PacketType((data[6]&(3<<6))>>6)
     message_type = MessageType((data[6]&(7<<3))>>3)
     expected_type = MessageType(data[6]&(7))

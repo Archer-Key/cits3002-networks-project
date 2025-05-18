@@ -38,21 +38,27 @@ def process_messages(s):
     global seq_s
 
     while True:
+        #print(f"DEBUG: Messages to process {recv_window}")
         try:
             msg = heapq.heappop(recv_window)[1]
-        except IndexError: # all messages sent
+            #print(f"DEBUG PROCESSING: seq: {msg.seq}, pck_t: {msg.packet_type}, type: {msg.type}, expected: {msg.expected}, id: {msg.id}, msg_len: {msg.msg_len}, msg: {msg.msg}\n\n\n")
+        except IndexError: # all messages read
+            #print(f"DEBUG: All messages processed")
             return
         
         if msg.seq < seq_r: # skip duplicates
+            #print(f"DEBUG: Duplicate")
             continue
 
         if msg.seq > seq_r: # end if message is a future packet
+            #print(f"DEBUG: Future")
             heapq.heappush(recv_window, (msg.seq, msg))
             send_ack(s, seq_r)
             return 
         
         # process the message
         try:
+            #print(f"DEBUG: Processing message")
             type = msg.type
             expected_response = msg.expected
 
@@ -149,24 +155,28 @@ def receive_messages(s):
                 
                 if (msg.seq < seq_r): #ignore already received packets
                     continue
+
+                heapq.heappush(recv_window, (msg.seq, msg))
                 
             except NotEnoughBytesError:
                 break
             
             except ChecksumMismatchError:
-                send_nack()
+                send_nack(s)
                 incoming = bytearray()
                 break
 
-            process_messages(s)
+        process_messages(s)
 #endregion
 
 #region Send
 def send_msg(s, msg, new=True):
     encoded = msg.encode()
+    #print(f"DEBUG SENDING: seq: {msg.seq}, pck_t: {msg.packet_type}, type: {msg.type}, expected: {msg.expected}, id: {msg.id}, msg_len: {msg.msg_len}, msg: {msg.msg}\n\n\n")
     s.send(encoded)
     if new:
         heapq.heappush(send_window, (msg.seq, msg))
+        global seq_s
         seq_s += 1
 
 def send_ack(s, seq):

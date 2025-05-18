@@ -60,7 +60,7 @@ def send_message_to(client, send_msg, new=True):
         msg.seq = client.seq_s
         heapq.heappush(client.send_window, (msg.seq, msg))
         client.seq_s += 1
-    print(f"DEBUG SENDING: seq: {msg.seq}, pck_t: {msg.packet_type}, type: {msg.type}, expected: {msg.expected}, id: {msg.id}, msg: {msg.msg}\n\n\n")
+    print(f"DEBUG SENDING: seq: {msg.seq}, pck_t: {msg.packet_type}, type: {msg.type}, expected: {msg.expected}, id: {msg.id}, msg_len: {msg.msg_len}, msg: {msg.msg}\n\n\n")
     client.conn.send(msg.encode()) 
 
 def send_message_to_all(clients, msg):
@@ -269,10 +269,10 @@ def handle_client(client):
             
             client.incoming += bytearray(raw)
 
-            while len(incoming) >= 9:
+            while len(client.incoming) >= 9:
                 try:
                     msg = Message.decode(client.incoming)
-                    incoming = incoming[0:9+msg.msg_len]
+                    client.incoming = client.incoming[9+msg.msg_len:]
 
                     if msg.packet_type == PacketType.ACK:
                         sent = heapq.heappop(client.send_window)
@@ -296,16 +296,18 @@ def handle_client(client):
             
                     if (msg.seq < client.seq_r): #ignore already received packets
                         continue
+
+                    heapq.heappush(client.recv_window, (msg.seq, msg))
                 
                 except NotEnoughBytesError:
                     break
 
                 except ChecksumMismatchError:
                     send_nack(client)
-                    incoming = bytearray()
+                    client.incoming = bytearray()
                     break
 
-                process_client_messages(client)
+            process_client_messages(client)
 
     # handle disconnect
     handle_disconnect(client) # this is still part of handle_client()
