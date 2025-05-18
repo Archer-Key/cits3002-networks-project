@@ -26,7 +26,9 @@ send_window = []
 seq_r = 0
 recv_window = []
 
-#region Recieve
+incoming = bytearray()
+
+#region Process
 def process_messages(s):
     global client_id
     global expected_response
@@ -95,7 +97,9 @@ def process_messages(s):
             print(f"Failure decoding message, ignoring {e}")
             print("#####\n"*5)
             return
+#endregion
 
+#region Receive
 def receive_messages(s):
     # These have to be here otherwise they don't work properly when referenced
     global client_id
@@ -104,6 +108,7 @@ def receive_messages(s):
     global seq_r
     global send_window
     global seq_s
+    global incoming
 
     """Continuously receive and display messages from the server"""
     while (True):
@@ -114,37 +119,45 @@ def receive_messages(s):
             print("[INFO] Server disconnected.")
             break
         
-        try:
-            msg = Message.decode(raw)
-            #print(f"DEBUG: seq: {msg.seq}, pck_t: {msg.packet_type}, type: {msg.type}, expected: {msg.expected}, id: {msg.id}, msg: {msg.msg}\n\n\n")
+        incoming += bytearray(raw)
+        
+        while len(incoming) > 0:
+            try:
+                msg = Message.decode(incoming)
+                incoming = incoming[0:9+msg.msg_len]
 
-            if msg.packet_type == PacketType.ACK:
-                sent = heapq.heappop(send_window)
-                while (sent[0] < msg.seq):
-                    sent = heapq.heapop(send_window)
-                heapq.heappush(send_window, sent) # push the last element popped back on
-                continue
+                if msg.packet_type == PacketType.ACK:
+                    sent = heapq.heappop(send_window)
+                    while (sent[0] < msg.seq):
+                        sent = heapq.heapop(send_window)
+                    heapq.heappush(send_window, sent) # push the last element popped back on
+                    continue
             
-            if msg.packet_type == PacketType.NACK: # resend all messages
-                messages = send_window.copy()
-                while True:
-                    try:
-                        send_msg(s, heapq.heappop(messages)[1], False) 
-                    except IndexError:
-                        break
-                continue
+                if msg.packet_type == PacketType.NACK: # resend all messages
+                    messages = send_window.copy()
+                    while True:
+                        try:
+                            send_msg(s, heapq.heappop(messages)[1], False) 
+                        except IndexError:
+                            break
+                    continue
             
-            if (msg.seq > seq_r): # queue future packets
-                heapq.heappush(recv_window, (msg.seq, msg))
-                continue
+                if (msg.seq > seq_r): # queue future packets
+                    heapq.heappush(recv_window, (msg.seq, msg))
+                    continue
             
-            if (msg.seq < seq_r): #ignore already received packets
-                continue
+                if (msg.seq < seq_r): #ignore already received packets
+                    continue
+            
+            except NotEnoughBytesError:
+                break
+            
+            except ChecksumMismatchError:
+                send_nack()
+                incoming = bytearray()
+                break
 
             process_messages(s)
-                    
-        except ChecksumMismatchError:
-            send_nack(s)
 #endregion
 
 #region Send
@@ -152,7 +165,7 @@ def send_msg(s, msg, new=True):
     encoded = msg.encode()
     s.send(encoded)
     if new:
-        send_window.headpush(send_window, (msg.seq, msg))
+        heapq.heappush(send_window, (msg.seq, msg))
         seq_s += 1
 
 def send_ack(s, seq):
@@ -171,10 +184,10 @@ def send_messages(s):
 
         ## handle word inputs to decided type then check mismatch at recieve
         command = user_input.split(" ")
-        print(command)
+        #print(command)
 
         send_type = expected_response
-        print(expected_response)
+        #print(expected_response)
 
         match command[0].upper():
             case "FIRE":

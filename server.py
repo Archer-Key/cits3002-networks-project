@@ -13,6 +13,7 @@ However, if you want to support multiple clients (i.e. progress through further 
 import time
 import socket
 import threading
+import heapq
 from enum import Enum
 from random import randint
 
@@ -40,19 +41,41 @@ class Client:
         self.type = ClientType.SPECTATOR
         self.timeout = None
         self.username = ""
+        # used for protocol
+        self.incoming = bytearray()
+        self.seq_s = 0
+        self.send_window = []
+        self.seq_r = 0
+        self.recv_window = []
     def set_spectator(self):
         self.type = ClientType.SPECTATOR
     def set_player(self):
         self.type = ClientType.PLAYER
+#endregion
 
-def send_message_to(client, msg):
-    # TODO: add client seqno
+#region Send Messages
+def send_message_to(client, send_msg, new=True):
+    msg = send_msg.copy() # used so that multiple users can send the same message with different seq
+    if new:
+        msg.seq = client.seq_s
+        heapq.heappush(client.send_window, (msg.seq, msg))
+        client.seq_s += 1
     print(f"DEBUG SENDING: seq: {msg.seq}, pck_t: {msg.packet_type}, type: {msg.type}, expected: {msg.expected}, id: {msg.id}, msg: {msg.msg}\n\n\n")
     client.conn.send(msg.encode()) 
 
 def send_message_to_all(clients, msg):
     for client in clients:
         send_message_to(client, msg)
+
+def send_ack(client, seq):
+    ack = Message(id=client.id, type=MessageType.TEXT, expected=MessageType.TEXT, msg="",\
+                           seq=seq, packet_type=PacketType.ACK)
+    send_message_to(client, ack, False)
+
+def send_nack(client, seq):
+    nack = Message(id=client.id, type=MessageType.TEXT, expected=MessageType.TEXT, msg="",\
+                           seq=0, packet_type=PacketType.NACK)
+    send_message_to(client, nack, False)
 
 def handle_chat(client, msg):
     pass
@@ -86,6 +109,84 @@ def end_game(game):
     print("ending game")
     game.state = GameState.END
 
+#endregion
+
+#region Process Msg
+def process_client_messages(client):
+    while True:
+        try:
+            msg = heapq.heappop(client.recv_window)[1]
+        except IndexError: # all messages sent
+            return
+        
+        if msg.seq < client.seq_r: # skip duplicates
+            continue
+
+        if msg.seq > client.seq_r: # end if message is a future packet
+            heapq.heappush(client.recv_window, (msg.seq, msg))
+            send_ack(client, client.seq_r)
+            return 
+        
+        # process the message
+        try:
+            try:
+                ## Handles inputs out side of game world
+                if msg.type == MessageType.CHAT:
+                    handle_chat(client, msg)
+                    continue
+
+                elif msg.type == MessageType.DISCONNECT:
+                    handle_disconnect(client)
+                    continue
+                
+                if client.type == ClientType.SPECTATOR:
+                    res = Message(SERVER_ID, MessageType.TEXT, MessageType.CHAT, "Incorrect message type.")
+                    send_message_to(client, res)
+
+                player = game.get_player(msg.id)
+                if player == None:
+                    raise ValueError # a different type of error is probably better here
+                
+                # inputs during gameplay
+                if game.state == GameState.WAIT:
+                    game.send_waiting_message(client)
+                    
+            ## Needs better way to check mismatch between game state and message type
+                elif game.state == GameState.PLACE:
+                    if msg.type == MessageType.PLACE:
+                        game.place_ship(client.id, msg.msg)
+                    else:
+                        res = Message(SERVER_ID, MessageType.TEXT, MessageType.NONE, "Incorrect Command Type")
+                        send_message_to(client, res)
+                        
+                elif game.state == GameState.BATTLE:
+                    if msg.type == MessageType.FIRE:
+                        game.fire(client.id, msg.msg)
+                    else:
+                        res = Message(SERVER_ID, MessageType.TEXT, MessageType.NONE, "Incorrect Command Type")
+                        send_message_to(client, res)
+
+                elif game.state == GameState.END:
+                    res = Message(SERVER_ID, MessageType.TEXT, MessageType.CHAT,\
+                                  "Game has ended. Thank you for playing!")
+                    send_message_to(client, res)
+
+                else:
+                    print("Error, game is in an unknown state.")
+
+            except ValueError:
+                # handle malformed message
+                pass
+          
+            # all went well
+            seq_r += 1
+
+        except ValueError as e:
+            # needs to be handled better
+            print("#####\n"*5)
+            print(f"Failure decoding message, ignoring {e}")
+            print("#####\n"*5)
+            return
 #endregion
 
 #region Handle Client
@@ -145,8 +246,9 @@ def handle_client(client):
         elif game.state == GameState.END:
             spec_msg = Message(SERVER_ID, MessageType.TEXT, MessageType.CHAT, "WAITING FOR NEW GAME TO START")
             send_message_to(client, spec_msg)
-        
+#endregion
 
+#region Receive Msg
         # recieve messages from client
         while True:
             try:
@@ -164,61 +266,49 @@ def handle_client(client):
                 if client.timeout:
                     client.timeout.active = False
                 client.timeout = Timer(client, 30)
+            
+            client.incoming += bytearray(raw)
 
-            try:
-                msg = Message.decode(raw)
+            while len(incoming) > 0:
+                try:
+                    msg = Message.decode(client.incoming)
+                    incoming = incoming[0:9+msg.msg_len]
 
-                ## Handles inputs out side of game world
-
-                if msg.type == MessageType.CHAT:
-                    handle_chat(client, msg)
-                    continue
-
-                elif msg.type == MessageType.DISCONNECT:
-                    handle_disconnect(client)
-                    continue
+                    if msg.packet_type == PacketType.ACK:
+                        sent = heapq.heappop(client.send_window)
+                        while (sent[0] < msg.seq):
+                            sent = heapq.heapop(client.send_window)
+                        heapq.heappush(client.send_window, sent) # push the last element popped back on
+                        continue
+            
+                    if msg.packet_type == PacketType.NACK: # resend all messages
+                        messages = client.send_window.copy()
+                        while True:
+                            try:
+                                send_message_to(client, heapq.heappop(messages)[1], False) 
+                            except IndexError:
+                                break
+                        continue
+            
+                    if (msg.seq > client.seq_r): # queue future packets
+                        heapq.heappush(client.recv_window, (msg.seq, msg))
+                        continue
+            
+                    if (msg.seq < client.seq_r): #ignore already received packets
+                        continue
                 
-                if client.type == ClientType.SPECTATOR:
-                    res = Message(SERVER_ID, MessageType.TEXT, MessageType.CHAT, "Incorrect message type.")
-                    send_message_to(client, res)
+                except NotEnoughBytesError:
+                    break
 
-                player = game.get_player(msg.id)
-                if player == None:
-                    raise ValueError # a different type of error is probably better here
-                
-                # inputs during gameplay
-                if game.state == GameState.WAIT:
-                    game.send_waiting_message(client)
-                    
-            ## Needs better way to check mismatch between game state and message type
-                elif game.state == GameState.PLACE:
-                    if msg.type == MessageType.PLACE:
-                        game.place_ship(client.id, msg.msg)
-                    else:
-                        res = Message(SERVER_ID, MessageType.TEXT, MessageType.NONE, "Incorrect Command Type")
-                        send_message_to(client, res)
-                        
-                elif game.state == GameState.BATTLE:
-                    if msg.type == MessageType.FIRE:
-                        game.fire(client.id, msg.msg)
-                    else:
-                        res = Message(SERVER_ID, MessageType.TEXT, MessageType.NONE, "Incorrect Command Type")
-                        send_message_to(client, res)
+                except ChecksumMismatchError:
+                    send_nack(client)
+                    incoming = bytearray()
+                    break
 
-                elif game.state == GameState.END:
-                    res = Message(SERVER_ID, MessageType.TEXT, MessageType.CHAT,\
-                                  "Game has ended. Thank you for playing!")
-                    send_message_to(client, res)
-
-                else:
-                    print("Error, game is in an unknown state.")
-
-            except ValueError:
-                # handle malformed message
-                pass
+                process_client_messages(client)
 
     # handle disconnect
-    handle_disconnect(client)
+    handle_disconnect(client) # this is still part of handle_client()
 #endregion
 
 #region Game
@@ -369,6 +459,7 @@ class Game:
             row_str = " ".join(grid_to_send[r][c] for c in range(board.size))
             board_msg = board_msg + f"{row_label:2} {row_str}" + "|"
         
+        print(board_msg[17])
         return board_msg
     
     """

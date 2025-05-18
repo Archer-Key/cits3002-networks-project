@@ -2,9 +2,15 @@ from enum import Enum
 
 BUFSIZE = 516 # Maximum size of a packet
 
-class ChecksumMismatchError(Exception):
+#region Errors
+class NotEnoughBytesError(Exception):
   pass
 
+class ChecksumMismatchError(Exception):
+  pass
+#endregion
+
+#region Types
 class PacketType(Enum):
   DATA = 0
   ACK = 1
@@ -19,7 +25,9 @@ class MessageType(Enum):
   PLACE = 5 # Message type for placing ships.
   FIRE = 6 # Message type for player to fire at coordinates during the battle section.
   RESULT = 7 # Acknowledges result of player's fire attempt.
+#endregion
 
+#region CRC32
 def invert_bit_order(num):
   out = 0
   for i in range(0,8):
@@ -53,7 +61,9 @@ def crc32(pack):
   crc.append((input&(255<<8))>>8) # etc...
   crc.append(input&(255))
   return crc
+#endregion
 
+#region Message Struct
 class Message:
   # Stucture of a basic message to send over the socket.
   def __init__(self, id, type, expected, msg="", seq=0, packet_type=PacketType.DATA):
@@ -63,41 +73,54 @@ class Message:
     self.expected = expected # Type of message sender expects to receive, set NONE for no resposne
     self.id = id 
     self.msg = str(msg)
+    self.msg_len = len(self.msg)
+#endregion
 
+#region Encoding
   def encode(self):
     pack = bytearray()
     pack.append(self.seq>>8)
     pack.append(self.seq&255)
-    pack.append(self.id)
     pack.append((self.packet_type.value<<6)+(self.type.value<<3)+(self.expected.value))
-    if len(self.msg) > 512:
-      self.msg = self.msg[0:512] # cut mesages off at 512 bytes
+    if self.msg_len > 511:
+      self.msg = self.msg[0:511] # cut mesages off at 511 bytes
+      self.msg_len = 511
+    pack.append((self.id<<1)+(self.msg_len>>8))
+    pack.append(self.msg_len&255)
     if len(self.msg) != 0:
       pack = (pack + bytearray(self.msg.encode("utf-8")))
     crc = crc32(pack)
-    return bytes(pack + crc)
-  
+    return bytes(crc + pack)
+#endregion
+
+#region Decoding
   # Decode an encoded message into a Message object
   @staticmethod
-  def decode(pack):
-    pack_len = len(pack)
-    data = pack[0:pack_len-4]
-    crc = pack[pack_len-4:]
-    expected_crc = bytes(crc32(data))
-    if (crc == expected_crc):
-      seq = data[0]<<8 + data[1]
-      id = data[2]
-      packet_type = PacketType((data[3]&(3<<6))>>6)
-      message_type = MessageType((data[3]&(7<<3))>>3)
-      expected_type = MessageType(data[3]&(7))
-      msg = ""
-      if len(data) >= 4:
-        try:
-          msg = data[4:].decode("utf-8")
-        except:
-          print("THIS DATA WAS UNABLE TO BE DECODED")
-          print(data)
-          print(len(data))
-      return Message(id=id, type=message_type, expected=expected_type, msg=msg, seq=seq, packet_type=packet_type)
-    else:
+  def decode(data):
+    data_len = len(data)
+    if (data_len < 9):
+      raise NotEnoughBytesError
+
+    crc = data[0:4]
+    seq = data[4]<<8 + data[5]
+    packet_type = PacketType((data[6]&(3<<6))>>6)
+    message_type = MessageType((data[6]&(7<<3))>>3)
+    expected_type = MessageType(data[6]&(7))
+    id = data[7]>>1
+    msg_len = ((data[7]&1)<<8) + data[8]
+    msg = ""
+    if msg_len != 0:
+      try:
+        msg = data[9:9+msg_len].decode("latin-1")
+      except IndexError:
+        raise NotEnoughBytesError
+
+    expected_crc = crc32(bytearray(data[4:9+msg_len]))
+    if crc != expected_crc:
       raise ChecksumMismatchError
+    
+    return Message(id=id, type=message_type, expected=expected_type, msg=msg, seq=seq, packet_type=packet_type)
+#endregion
+
+  def copy(self): # Used to copy a packet to avoid python object shenanigans
+    return Message(self.id, self.type, self.expected, self.msg, self.seq, self.packet_type)
