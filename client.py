@@ -120,11 +120,12 @@ def receive_messages(s):
             break
         
         incoming += bytearray(raw)
-        
-        while len(incoming) > 0:
+
+        while len(incoming) >= 9:
             try:
                 msg = Message.decode(incoming)
-                incoming = incoming[0:9+msg.msg_len]
+                print(msg.seq, msg.msg)
+                incoming = incoming[9+msg.msg_len:]
 
                 if msg.packet_type == PacketType.ACK:
                     sent = heapq.heappop(send_window)
@@ -132,7 +133,7 @@ def receive_messages(s):
                         sent = heapq.heapop(send_window)
                     heapq.heappush(send_window, sent) # push the last element popped back on
                     continue
-            
+                
                 if msg.packet_type == PacketType.NACK: # resend all messages
                     messages = send_window.copy()
                     while True:
@@ -141,14 +142,14 @@ def receive_messages(s):
                         except IndexError:
                             break
                     continue
-            
+                
                 if (msg.seq > seq_r): # queue future packets
                     heapq.heappush(recv_window, (msg.seq, msg))
                     continue
-            
+                
                 if (msg.seq < seq_r): #ignore already received packets
                     continue
-            
+                
             except NotEnoughBytesError:
                 break
             

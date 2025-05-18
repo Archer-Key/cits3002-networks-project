@@ -269,7 +269,7 @@ def handle_client(client):
             
             client.incoming += bytearray(raw)
 
-            while len(incoming) > 0:
+            while len(incoming) >= 9:
                 try:
                     msg = Message.decode(client.incoming)
                     incoming = incoming[0:9+msg.msg_len]
