@@ -1,6 +1,24 @@
 from enum import Enum
 
-BUFSIZE = 516
+BUFSIZE = 516 # Maximum size of a packet
+
+class ChecksumMismatchError(Exception):
+  pass
+
+class PacketType(Enum):
+  DATA = 0
+  ACK = 1
+  NACK = 2
+
+class MessageType(Enum):
+  DISCONNECT = 0 # Tells the server a player is disconnecting
+  CONNECT = 1 # Gives the user their id when first connecting
+  TEXT = 2 # Indicates that the msg component should be printed as plaintext.
+  CHAT = 3 # Indicates that the msg should be broadcasted to all players and spectators.
+  BOARD = 4 # Indicates the msg should be printed as a board
+  PLACE = 5 # Message type for placing ships.
+  FIRE = 6 # Message type for player to fire at coordinates during the battle section.
+  RESULT = 7 # Acknowledges result of player's fire attempt.
 
 def invert_bit_order(num):
   out = 0
@@ -36,21 +54,6 @@ def crc32(pack):
   crc.append(input&(255))
   return crc
 
-class PacketType(Enum):
-  DATA = 0
-  ACK = 1
-  NACK = 2
-
-class MessageType(Enum):
-  DISCONNECT = 0 # Tells the server a player is disconnecting
-  CONNECT = 1 # Gives the user their id when first connecting
-  TEXT = 2 # Indicates that the msg component should be printed as plaintext.
-  CHAT = 3 # Indicates that the msg should be broadcasted to all players and spectators.
-  BOARD = 4 # Indicates the msg should be printed as a board
-  PLACE = 5 # Message type for placing ships.
-  FIRE = 6 # Message type for player to fire at coordinates during the battle section.
-  RESULT = 7 # Acknowledges result of player's fire attempt.
-
 class Message:
   # Stucture of a basic message to send over the socket.
   def __init__(self, id, type, expected, msg="", seq=0, packet_type=PacketType.DATA):
@@ -62,14 +65,15 @@ class Message:
     self.msg = str(msg)
 
   def encode(self):
-    head = bytearray()
-    head.append(self.seq>>8)
-    head.append(self.seq&255)
-    head.append(self.id)
-    head.append((self.packet_type.value<<6)+(self.type.value<<3)+(self.expected.value))
+    pack = bytearray()
+    pack.append(self.seq>>8)
+    pack.append(self.seq&255)
+    pack.append(self.id)
+    pack.append((self.packet_type.value<<6)+(self.type.value<<3)+(self.expected.value))
     if len(self.msg) > 512:
       self.msg = self.msg[0:512] # cut mesages off at 512 bytes
-    pack = (head + bytearray(self.msg.encode("utf-8")))
+    if len(self.msg) != 0:
+      pack = (pack + bytearray(self.msg.encode("utf-8")))
     crc = crc32(pack)
     return bytes(pack + crc)
   
@@ -88,8 +92,12 @@ class Message:
       expected_type = MessageType(data[3]&(7))
       msg = ""
       if len(data) >= 4:
-        msg = data[4:].decode("utf-8")
+        try:
+          msg = data[4:].decode("utf-8")
+        except:
+          print("THIS DATA WAS UNABLE TO BE DECODED")
+          print(data)
+          print(len(data))
       return Message(id=id, type=message_type, expected=expected_type, msg=msg, seq=seq, packet_type=packet_type)
     else:
-      print("Error detected")
-      return False
+      raise ChecksumMismatchError

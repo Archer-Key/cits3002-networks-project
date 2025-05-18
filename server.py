@@ -47,6 +47,7 @@ class Client:
 
 def send_message_to(client, msg):
     # TODO: add client seqno
+    print(f"DEBUG SENDING: seq: {msg.seq}, pck_t: {msg.packet_type}, type: {msg.type}, expected: {msg.expected}, id: {msg.id}, msg: {msg.msg}\n\n\n")
     client.conn.send(msg.encode()) 
 
 def send_message_to_all(clients, msg):
