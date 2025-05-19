@@ -199,8 +199,7 @@ def process_client_messages(client):
                 pass
           
             # all went well
-            client.seq_r += 1
-            client.seq_r = client.seq_r&((1<<16)-1) # loop around
+            client.seq_r = (client.seq_r+1)&((1<<16)-1) # loop around
 
         except ValueError as e:
             # needs to be handled better
