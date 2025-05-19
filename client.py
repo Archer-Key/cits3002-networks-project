@@ -96,6 +96,7 @@ def process_messages(s):
             
             # all went well
             seq_r += 1
+            seq_r = seq_r&((1<<16)-1) # loop if needed
 
         except ValueError as e:
             # needs to be handled better
@@ -175,7 +176,7 @@ def send_msg(s, msg, new=True):
     if new:
         heapq.heappush(send_window, (msg.seq, msg))
         global seq_s
-        seq_s += 1
+        seq_s = (seq_s+1)&((1<<16)-1) # add one and loop if needed
 
 def send_ack(s, seq):
     ack = Message(id=client_id, type=MessageType.TEXT, expected=MessageType.TEXT, msg="",\

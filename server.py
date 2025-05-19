@@ -62,7 +62,7 @@ def send_message_to(client, send_msg, new=True):
     if new:
         msg.seq = client.seq_s
         heapq.heappush(client.send_window, (msg.seq, msg))
-        client.seq_s += 1
+        client.seq_s = (client.seq_s+1)&((1<<16)-1)
     print(f"DEBUG SENDING: seq: {msg.seq}, pck_t: {msg.packet_type}, type: {msg.type}, expected: {msg.expected}, id: {msg.id}, msg_len: {msg.msg_len}, msg: {msg.msg}\n\n\n")
     client.conn.send(msg.encode()) 
 
@@ -142,6 +142,7 @@ def process_client_messages(client):
                 elif msg.type == MessageType.CONNECT:
                     client.username = msg.msg
                     client.seq_r += 1
+                    client.seq_r = client.seq_r&((1<<16)-1) # loop around
                     continue
 
                 elif msg.type == MessageType.DISCONNECT:
@@ -189,6 +190,7 @@ def process_client_messages(client):
           
             # all went well
             client.seq_r += 1
+            client.seq_r = client.seq_r&((1<<16)-1) # loop around
 
         except ValueError as e:
             # needs to be handled better
