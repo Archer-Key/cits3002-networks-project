@@ -160,8 +160,10 @@ def process_client_messages(client):
                     continue
                 
                 if client.type == ClientType.SPECTATOR:
+                    client.seq_r = (client.seq_r+1)&((1<<16)-1) # loop around
                     res = Message(SERVER_ID, MessageType.TEXT, MessageType.CHAT, "Incorrect message type.")
                     send_message_to(client, res)
+                    continue
 
                 player = game.get_player(msg.id)
                 if player == None:
