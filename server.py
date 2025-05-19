@@ -851,6 +851,12 @@ def handle_disconnect(client : Client):
     game.state = GameState.PAUSE
     if game.end_thread:
         return
+    
+    ## disable other players timeout timer
+    for other_client in clients:
+        if other_client.timeout:
+            other_client.timeout.active = False
+    
     game.end_thread = threading.Timer(30, end_game, args=(game,))
     game.end_thread.start()
 
