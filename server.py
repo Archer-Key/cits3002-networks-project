@@ -13,6 +13,7 @@ However, if you want to support multiple clients (i.e. progress through further 
 import time
 import socket
 import threading
+import heapq
 from enum import Enum
 from random import randint
 
@@ -25,7 +26,10 @@ PORT = 5000
 SERVER_ID = 0
 
 #region Clients
-clients = [] # should store this as a heap/queue/something so that we can pop random clients
+MAX_CLIENTS = 127
+clients = []
+num_clients = 0
+free_ids = list(range(0,127))
 
 class ClientType(Enum):
     SPECTATOR = 0
@@ -36,24 +40,45 @@ class Client:
         self.conn = conn
         self.addr = addr
         self.thread = None
-        self.rfile = None
-        self.wfile = None
         self.id = None
         self.type = ClientType.SPECTATOR
         self.timeout = None
         self.username = ""
+        # used for protocol
+        self.incoming = bytearray()
+        self.seq_s = 0
+        self.send_window = []
+        self.seq_r = 0
+        self.recv_window = []
     def set_spectator(self):
         self.type = ClientType.SPECTATOR
     def set_player(self):
         self.type = ClientType.PLAYER
+#endregion
 
-def send_message_to(client, msg):
-    client.wfile.write(msg + "\n") #DO NOT REMOVE THE NEW LINE CHARCTER OR ELSE IT WON'T SEND
-    client.wfile.flush()
+#region Send Messages
+def send_message_to(client, send_msg, new=True):
+    msg = send_msg.copy() # used so that multiple users can send the same message with different seq
+    if new:
+        msg.seq = client.seq_s
+        heapq.heappush(client.send_window, (msg.seq, msg))
+        client.seq_s = (client.seq_s+1)&((1<<16)-1)
+    print(f"DEBUG SENDING: seq: {msg.seq}, pck_t: {msg.packet_type}, type: {msg.type}, expected: {msg.expected}, id: {msg.id}, msg_len: {msg.msg_len}, msg: {msg.msg}\n\n\n")
+    client.conn.send(msg.encode()) 
 
 def send_message_to_all(clients, msg):
     for client in clients:
         send_message_to(client, msg)
+
+def send_ack(client, seq):
+    ack = Message(id=client.id, type=MessageType.TEXT, expected=MessageType.TEXT, msg="",\
+                           seq=seq, packet_type=PacketType.ACK)
+    send_message_to(client, ack, False)
+
+def send_nack(client):
+    nack = Message(id=client.id, type=MessageType.TEXT, expected=MessageType.TEXT, msg="",\
+                           seq=0, packet_type=PacketType.NACK)
+    send_message_to(client, nack, False)
 
 def handle_chat(client, msg):
     pass
@@ -89,97 +114,35 @@ def end_game(game):
 
 #endregion
 
-#region Handle Client
-def handle_client(client):
-    socket = client.conn
-    with socket:
-        rfile = socket.makefile('r')
-        wfile = socket.makefile('w')
-        client.rfile = rfile
-        client.wfile = wfile
-
-        # send client their client ID
-        id_msg = Message(id=SERVER_ID, type=MessageType.CONNECT, expected=MessageType.CHAT, msg=client.id)
-        send_message_to(client, id_msg.encode())
-
-        # wait to recieve client username
-        while client.username == "":
-            try:
-                raw = rfile.readline()
-            except:
-                pass
-            msg = Message.decode(raw)
-            ## should be the first message the server recieves from the client
-            if msg.type == MessageType.CONNECT:
-                client.username = msg.msg
+#region Process Msg
+def process_client_messages(client):
+    while True:
+        try:
+            msg = heapq.heappop(client.recv_window)[1]
+        except IndexError: # all messages sent
+            return
         
-        # check if clients username matchs disconnection
-        reconnecting_player = False
+        if msg.seq < client.seq_r: # skip duplicates
+            continue
 
-        if game.disconnected_player:
-            if client.username == game.disconnected_player.username:
-                print(f"reconnecting client {client.username}")
-                game.players[game.disconnected_player_id].client = client
-                reconnecting_player = True
-
-        # send client a message indicating their status
-        if game.state == GameState.WAIT:
-            game.send_waiting_message(client)
-        elif game.state in (GameState.PLACE, GameState.BATTLE):
-            spec_msg = Message(SERVER_ID, MessageType.TEXT, MessageType.CHAT, "YOU ARE CURRENTLY SPECTATING")
-            send_message_to(client, spec_msg.encode())
-        elif game.state == GameState.PAUSE:
-            if reconnecting_player:
-                game.state = game.previous_state
-                print(f"[INFO] player has reconnected and game is resuming to state [{game.state}]")
-                rec_msg = Message(SERVER_ID, MessageType.TEXT, MessageType.CHAT, f"Welcome back {client.username}, the game will now resume")
-                send_message_to(client, rec_msg.encode())
-                res_msg = Message(SERVER_ID, MessageType.TEXT, MessageType.CHAT, f"Player has reconnected, resuming game")
-                send_message_to_all(clients, res_msg.encode())
-                if game.state == GameState.BATTLE:
-                    for player in game.players:
-                        game.send_fire_prompt(player)
-                if game.state == GameState.PLACE:
-                    for player in game.players:
-                        game.send_place_prompt(player)
-                
-                game.disconnected_players -= 1
-                
-                game.end_thread.cancel()
-                
-            pass
-        elif game.state == GameState.END:
-            spec_msg = Message(SERVER_ID, MessageType.TEXT, MessageType.CHAT, "WAITING FOR NEW GAME TO START")
-            send_message_to(client, spec_msg.encode())
+        if msg.seq > client.seq_r: # end if message is a future packet
+            heapq.heappush(client.recv_window, (msg.seq, msg))
+            send_ack(client, client.seq_r)
+            return 
         
-
-        # recieve messages from client
-        while True:
+        # process the message
+        try:
             try:
-                raw = rfile.readline()
-            except ConnectionResetError or ConnectionAbortedError:
-                # player disconnected
-                break
-
-            ## not sure if this is needed anymore
-            if not raw:
-                break
-            
-            print("RECIEVED: " + raw)
-
-            ## start timeout timer for players
-            if client.type == ClientType.PLAYER:
-                if client.timeout:
-                    client.timeout.active = False
-                client.timeout = Timer(client, 30)
-
-            try:
-                msg = Message.decode(raw)
-
                 ## Handles inputs out side of game world
-
                 if msg.type == MessageType.CHAT:
                     handle_chat(client, msg)
+                    continue
+                
+                ## should be the first message the server recieves from the client
+                elif msg.type == MessageType.CONNECT:
+                    client.username = msg.msg
+                    client.seq_r += 1
+                    client.seq_r = client.seq_r&((1<<16)-1) # loop around
                     continue
 
                 elif msg.type == MessageType.DISCONNECT:
@@ -188,7 +151,7 @@ def handle_client(client):
                 
                 if client.type == ClientType.SPECTATOR:
                     res = Message(SERVER_ID, MessageType.TEXT, MessageType.CHAT, "Incorrect message type.")
-                    send_message_to(client, res.encode())
+                    send_message_to(client, res)
 
                 player = game.get_player(msg.id)
                 if player == None:
@@ -204,19 +167,19 @@ def handle_client(client):
                         game.place_ship(client.id, msg.msg)
                     else:
                         res = Message(SERVER_ID, MessageType.TEXT, MessageType.NONE, "Incorrect Command Type")
-                        send_message_to(client, res.encode())
+                        send_message_to(client, res)
                         
                 elif game.state == GameState.BATTLE:
                     if msg.type == MessageType.FIRE:
                         game.fire(client.id, msg.msg)
                     else:
                         res = Message(SERVER_ID, MessageType.TEXT, MessageType.NONE, "Incorrect Command Type")
-                        send_message_to(client, res.encode())
+                        send_message_to(client, res)
 
                 elif game.state == GameState.END:
                     res = Message(SERVER_ID, MessageType.TEXT, MessageType.CHAT,\
                                   "Game has ended. Thank you for playing!")
-                    send_message_to(client, res.encode())
+                    send_message_to(client, res)
 
                 else:
                     print("Error, game is in an unknown state.")
@@ -224,9 +187,128 @@ def handle_client(client):
             except ValueError:
                 # handle malformed message
                 pass
+          
+            # all went well
+            client.seq_r += 1
+            client.seq_r = client.seq_r&((1<<16)-1) # loop around
+
+        except ValueError as e:
+            # needs to be handled better
+            print("#####\n"*5)
+            print(f"Failure decoding message, ignoring {e}")
+            print("#####\n"*5)
+            return
+#endregion
+
+#region Handle Client
+def handle_client(client):
+    socket = client.conn
+    with socket:
+        # send client their client ID
+        id_msg = Message(id=SERVER_ID, type=MessageType.CONNECT, expected=MessageType.CHAT, msg=client.id)
+        send_message_to(client, id_msg)
+
+        # check if clients username matchs disconnection
+        reconnecting_player = False
+
+        if game.disconnected_player:
+            if client.username == game.disconnected_player.username:
+                print(f"reconnecting client {client.username}")
+                game.players[game.disconnected_player_id].client = client
+                reconnecting_player = True
+
+        # send client a message indicating their status
+        if game.state == GameState.WAIT:
+            game.send_waiting_message(client)
+        elif game.state in (GameState.PLACE, GameState.BATTLE):
+            spec_msg = Message(SERVER_ID, MessageType.TEXT, MessageType.CHAT, "YOU ARE CURRENTLY SPECTATING")
+            send_message_to(client, spec_msg)
+        elif game.state == GameState.PAUSE:
+            if reconnecting_player:
+                game.state = game.previous_state
+                print(f"[INFO] player has reconnected and game is resuming to state [{game.state}]")
+                rec_msg = Message(SERVER_ID, MessageType.TEXT, MessageType.CHAT, f"Welcome back {client.username}, the game will now resume")
+                send_message_to(client, rec_msg)
+                res_msg = Message(SERVER_ID, MessageType.TEXT, MessageType.CHAT, f"Player has reconnected, resuming game")
+                send_message_to_all(clients, res_msg)
+                if game.state == GameState.BATTLE:
+                    for player in game.players:
+                        game.send_fire_prompt(player)
+                if game.state == GameState.PLACE:
+                    for player in game.players:
+                        game.send_place_prompt(player)
+                
+                game.disconnected_players -= 1
+                
+                game.end_thread.cancel()
+                
+            pass
+        elif game.state == GameState.END:
+            spec_msg = Message(SERVER_ID, MessageType.TEXT, MessageType.CHAT, "WAITING FOR NEW GAME TO START")
+            send_message_to(client, spec_msg)
+#endregion
+
+#region Receive Msg
+        # recieve messages from client
+        while True:
+            try:
+                raw = client.conn.recv(BUFSIZE)
+            except ConnectionResetError or ConnectionAbortedError or OSError:
+                # player disconnected
+                break
+
+            ## not sure if this is needed anymore
+            if not raw:
+                break
+
+            ## start timeout timer for players
+            if client.type == ClientType.PLAYER:
+                if client.timeout:
+                    client.timeout.active = False
+                client.timeout = Timer(client, 30)
+            
+            client.incoming += bytearray(raw)
+
+            while len(client.incoming) >= 9:
+                try:
+                    msg = Message.decode(client.incoming)
+                    client.incoming = client.incoming[9+msg.msg_len:]
+
+                    if msg.packet_type == PacketType.ACK:
+                        sent = heapq.heappop(client.send_window)
+                        while (sent[0] < msg.seq):
+                            sent = heapq.heapop(client.send_window)
+                        heapq.heappush(client.send_window, sent) # push the last element popped back on
+                        continue
+            
+                    if msg.packet_type == PacketType.NACK: # resend all messages
+                        messages = client.send_window.copy()
+                        while True:
+                            try:
+                                send_message_to(client, heapq.heappop(messages)[1], False) 
+                            except IndexError:
+                                break
+                        continue
+            
+                    if (msg.seq >= client.seq_r): # queue future packets
+                        heapq.heappush(client.recv_window, (msg.seq, msg))
+                        continue
+            
+                    if (msg.seq < client.seq_r): #ignore already received packets
+                        continue
+                
+                except NotEnoughBytesError:
+                    break
+
+                except ChecksumMismatchError:
+                    send_nack(client)
+                    client.incoming = bytearray()
+                    break
+
+            process_client_messages(client)
 
     # handle disconnect
-    handle_disconnect(client)
+    handle_disconnect(client) # this is still part of handle_client()
 #endregion
 
 #region Game
@@ -276,7 +358,7 @@ class Game:
         client.set_spectator()
         if (send_msg):
             msg = Message(SERVER_ID, MessageType.TEXT, MessageType.CHAT, f"YOU ARE A SPECTATOR")
-            send_message_to(client, msg.encode())
+            send_message_to(client, msg)
 
     """
     Set a client as a player.
@@ -285,7 +367,7 @@ class Game:
         client.set_player()
         self.players[player_id].client = client
         msg = Message(SERVER_ID, MessageType.TEXT, MessageType.CHAT, f"YOU ARE PLAYER {player_id}")
-        send_message_to(client, msg.encode())
+        send_message_to(client, msg)
 
     """
     Decide on the next two players and set them as players.
@@ -332,10 +414,10 @@ class Game:
     """
     def handle_player_quit(self, player):
         msg = Message(SERVER_ID, MessageType.TEXT, MessageType.CHAT, "Thanks for playing!")
-        send_message_to(player.client, msg.encode())
+        send_message_to(player.client, msg)
         
         msg = Message(SERVER_ID, MessageType.TEXT, MessageType.CHAT, "Other player has decided to quit. Thanks for playing!")
-        send_message_to(self.get_opponent(player).client, msg.encode())
+        send_message_to(self.get_opponent(player).client, msg)
         
         self.state = GameState.END
         close_all_connections()
@@ -345,10 +427,10 @@ class Game:
     """
     def handle_player_timeout(self, player):
         msg = Message(SERVER_ID, MessageType.TEXT, MessageType.CHAT, "You have taken to long to make a move")
-        send_message_to(player.client, msg.encode())
+        send_message_to(player.client, msg)
         
         msg = Message(SERVER_ID, MessageType.TEXT, MessageType.CHAT, "Other player has timed out. Thanks for playing!")
-        send_message_to(self.get_opponent(player).client, msg.encode())
+        send_message_to(self.get_opponent(player).client, msg)
         
         self.state = GameState.END
         close_all_connections()
@@ -362,7 +444,7 @@ class Game:
         num_clients = len(clients)
         res = Message(SERVER_ID, MessageType.TEXT, MessageType.CHAT,\
                       f"Waiting for game to start... Clients connected [{num_clients}/2]")
-        send_message_to(client, res.encode())
+        send_message_to(client, res)
 
     """
     Convert a board into a sendable string.
@@ -377,6 +459,7 @@ class Game:
             row_str = " ".join(grid_to_send[r][c] for c in range(board.size))
             board_msg = board_msg + f"{row_label:2} {row_str}" + "|"
         
+        print(board_msg[17])
         return board_msg
     
     """
@@ -386,10 +469,10 @@ class Game:
         client = to_player.client
         board_msg = self.board_to_str(board, show_hidden)
         msg = Message(SERVER_ID, MessageType.BOARD, MessageType.PLACE, board_msg)
-        send_message_to(client, msg.encode())
+        send_message_to(client, msg)
         if self.state == GameState.BATTLE:
             spec_msg = Message(SERVER_ID, MessageType.BOARD, MessageType.CHAT, board_msg)
-            self.announce_to_spectators(spec_msg.encode())
+            self.announce_to_spectators(spec_msg)
     
     """
     Send a message to both players.
@@ -426,7 +509,7 @@ class Game:
         if (player.ships_placed >= 5):
             self.send_board(player, player.board, show_hidden=True)
             msg = Message(SERVER_ID, MessageType.TEXT, MessageType.CHAT, "All ships placed. Waiting for opponent...")
-            send_message_to(player.client, msg.encode())
+            send_message_to(player.client, msg)
             return
 
         self.send_board(player, player.board, show_hidden=True)
@@ -435,7 +518,7 @@ class Game:
         
         prompt_msg = f"Place {ship_name} (Size: {ship_size}) {self.orientation_str(orientation)}. Enter 'x' to change orientation."
         msg = Message(SERVER_ID, MessageType.TEXT, MessageType.PLACE, prompt_msg)
-        send_message_to(player.client, msg.encode())
+        send_message_to(player.client, msg)
 
     """
     Attempts to place a ship in the coordinates provided.
@@ -454,7 +537,7 @@ class Game:
 
         if (player.ships_placed >= 5):
             msg = Message(SERVER_ID, MessageType.TEXT, MessageType.CHAT, "All ships placed. Waiting for opponent...")
-            send_message_to(player.client, msg.encode())
+            send_message_to(player.client, msg)
             return
         
         # Get coordinates from message
@@ -469,7 +552,7 @@ class Game:
             row, col = parse_coordinate(coords)
         except ValueError as e:
             msg = Message(SERVER_ID, MessageType.TEXT, MessageType.PLACE, f"[!] Invalid coordinate: {e}")
-            send_message_to(player.client, msg.encode())
+            send_message_to(player.client, msg)
             self.send_place_prompt(player)
             return
         
@@ -482,7 +565,7 @@ class Game:
             })
             player.ships_placed += 1
             spec_msg = Message(SERVER_ID, MessageType.TEXT, MessageType.CHAT, f"PLAYER {player.id} PLACED THEIR {ship_name}")
-            self.announce_to_spectators(spec_msg.encode())
+            self.announce_to_spectators(spec_msg)
         else:
             msg = Message(SERVER_ID, MessageType.TEXT, MessageType.PLACE,\
             f"[!] Cannot place {ship_name} at {coords} (orientation={self.orientation_str(orientation)}). Try again.")
@@ -513,9 +596,9 @@ class Game:
         # Prompt the player to fire
         msg = Message(SERVER_ID, MessageType.TEXT, MessageType.FIRE,\
                       f"Enter coordinate to fire at (e.g. B5): ")
-        send_message_to(player.client, msg.encode())
+        send_message_to(player.client, msg)
         spec_msg = Message(SERVER_ID, MessageType.TEXT, MessageType.CHAT, f"PLAYER {player.id} FIRING")
-        self.announce_to_spectators(spec_msg.encode())
+        self.announce_to_spectators(spec_msg)
     
     """
     Attempts to fire at a tile of the opponents board.
@@ -539,7 +622,7 @@ class Game:
         if (player.id != self.player_turn):
             msg = Message(SERVER_ID, MessageType.TEXT, MessageType.FIRE,\
                           "Fired out turn, command ignored. Waiting for opponent to fire...")
-            send_message_to(player.client, msg.encode())
+            send_message_to(player.client, msg)
             return
         
         opponent = self.get_opponent(player)
@@ -553,7 +636,7 @@ class Game:
             if result == "already_shot":
                 msg = Message(SERVER_ID, MessageType.RESULT, MessageType.FIRE,\
                               "REPEAT You've already fired at that location.")
-                send_message_to(player.client, msg.encode())
+                send_message_to(player.client, msg)
                 self.send_fire_prompt(player)
                 return
             
@@ -578,19 +661,19 @@ class Game:
             # Send result to player
             self.send_board(player, opponent.board)
             res_msg = Message(SERVER_ID, MessageType.RESULT, MessageType.FIRE, res_txt)
-            send_message_to(player.client, res_msg.encode())
+            send_message_to(player.client, res_msg)
             # Send result to opponent
             opp_msg = Message(SERVER_ID, MessageType.RESULT, MessageType.FIRE, opp_txt)
-            send_message_to(opponent.client, opp_msg.encode())
+            send_message_to(opponent.client, opp_msg)
             # Announce result to spectators
             spec_msg = Message(SERVER_ID, MessageType.TEXT, MessageType.CHAT, spec_txt)
-            self.announce_to_spectators(spec_msg.encode())
+            self.announce_to_spectators(spec_msg)
             # End turn
             self.end_player_turn(player)
         
         except ValueError as e:
             msg = Message(SERVER_ID, MessageType.TEXT, MessageType.FIRE, f"Invalid input: {e}")
-            send_message_to(player.client, msg.encode())
+            send_message_to(player.client, msg)
             self.send_fire_prompt(player)
 #endregion
 
@@ -610,12 +693,12 @@ class Game:
     
     def start_battle(self):
         battle_msg = Message(SERVER_ID, MessageType.TEXT, MessageType.FIRE, "BATTLE STARTING")
-        self.announce_to_players(battle_msg.encode())
+        self.announce_to_players(battle_msg)
         self.player_turn = randint(0,1)
         # Send prompt to player who's turn is first and wait to other player
         self.send_fire_prompt(self.players[self.player_turn])
         wait_msg = Message(SERVER_ID, MessageType.TEXT, MessageType.FIRE, "Waiting for opponent...")
-        send_message_to(self.players[1 - self.player_turn].client, wait_msg.encode())
+        send_message_to(self.players[1 - self.player_turn].client, wait_msg)
 
     def battle_stage(self):
         if (self.players[0].board.all_ships_sunk()):
@@ -637,7 +720,7 @@ class Game:
         
         # Announce start
         start_msg = Message(SERVER_ID, MessageType.TEXT, MessageType.CHAT, "GAME STARTING")
-        send_message_to_all(clients, start_msg.encode())
+        send_message_to_all(clients, start_msg)
         self.state = GameState.PLACE
 
         # Announce players
@@ -645,7 +728,7 @@ class Game:
                 
         # Announce spectators
         msg = Message(SERVER_ID, MessageType.TEXT, MessageType.CHAT, f"YOU ARE A SPECTATOR")
-        self.announce_to_spectators(msg.encode())
+        self.announce_to_spectators(msg)
 
         self.placing_stage()
         
@@ -667,23 +750,23 @@ class Game:
         
         # End game
         end_msg = Message(SERVER_ID, MessageType.TEXT, MessageType.CHAT, "GAME OVER")
-        self.announce_to_players(end_msg.encode())
+        self.announce_to_players(end_msg)
         
         if winner:
             # Game finished with a player winning
             # Send win message
             win_msg = Message(SERVER_ID, MessageType.TEXT, MessageType.CHAT, "YOU WIN!!!")
-            send_message_to(winner.client, win_msg.encode())
+            send_message_to(winner.client, win_msg)
             win_stats_msg = Message(SERVER_ID, MessageType.TEXT, MessageType.CHAT, f"You won in {winner.moves} moves!")
-            send_message_to(winner.client, win_stats_msg.encode())
+            send_message_to(winner.client, win_stats_msg)
             
             # Send lose message
             loss_msg = Message(SERVER_ID, MessageType.TEXT, MessageType.CHAT, "You lose")
-            send_message_to(loser.client, loss_msg.encode())
+            send_message_to(loser.client, loss_msg)
 
             # Announce to spectators
             spec_msg = Message(SERVER_ID, MessageType.TEXT, MessageType.CHAT, f"GAME OVER! PLAYER {winner.id} WINS!")
-            self.announce_to_spectators(spec_msg.encode())
+            self.announce_to_spectators(spec_msg)
 
         self.game_number += 1
 
@@ -697,20 +780,22 @@ class Game:
             self.play_game()
         close_all_connections()
 
-
 game = Game()
 game_manager = None
 #endregion
 
 #region Connections
 def handle_disconnect(client : Client):
+    global num_clients
     ## it looks like this is firing twice, not sure why, have to look into it
     print(f"[INFO] Client [{client.id}] disconnected.")
 
     if client.timeout:
         client.timeout.active = False
     if client in clients:
+        heapq.heappush(free_ids, client.id)
         clients.remove(client)
+        num_clients -= 1
     game.remove_player(client)
 
     client.conn.close()
@@ -728,7 +813,7 @@ def handle_disconnect(client : Client):
     game.end_thread.start()
 
     msg = Message(SERVER_ID, MessageType.TEXT, MessageType.CHAT, f"[INFO] player [{client.id}] has disconnected, waiting for reconnect")
-    game.announce_to_players(msg.encode())
+    game.announce_to_players(msg)
 
 
 def close_all_connections():
@@ -737,6 +822,8 @@ def close_all_connections():
 
 # main thread accepts clients in a loop
 def main():
+    global num_clients
+
     print(f"[INFO] Server listening on {HOST}:{PORT}")
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
         s.bind((HOST, PORT))
@@ -746,23 +833,25 @@ def main():
         game_manager.daemon = True
         game_manager.start()
         
-        num_clients = 0
-
         # listen for connections
-        while True:
-            s.listen(1)
-            conn, addr = s.accept()
-            print(f"[INFO] Client connected from {addr}")
+        try:
+            while True: # keeps thread open when max clients is full and allows for clients to decrease
+                while num_clients < MAX_CLIENTS:
+                    s.listen(1)
+                    conn, addr = s.accept()
+                    print(f"[INFO] Client connected from {addr}")
 
-            client = Client(conn, addr)
-            clients.append(client)
-            num_clients += 1
-            client.id = num_clients # can probably replace this with a classmethod
+                    client = Client(conn, addr)
+                    clients.append(client)
+                    num_clients += 1
+                    client.id = heapq.heappop(free_ids)
 
-            thread = threading.Thread(target=handle_client, args=[client])
-            thread.daemon = True
-            client.thread = thread
-            thread.start()
+                    thread = threading.Thread(target=handle_client, args=[client])
+                    thread.daemon = True
+                    client.thread = thread
+                    thread.start()
+        except KeyboardInterrupt:
+            return
 #end region
 
 if __name__ == "__main__":

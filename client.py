@@ -12,42 +12,62 @@ PORT = 5000
 
 import threading
 
+import heapq
+
 from protocol import *
 
 client_id = None
 expected_response = MessageType.CHAT
 username = ""
 
-#region Recieve
-def receive_messages(rfile):
-    # These two have to be here otherwise they don't work properly when referenced
+seq_s = 0
+send_window = []
+
+seq_r = 0
+recv_window = []
+
+incoming = bytearray()
+
+#region Process
+def process_messages(s):
     global client_id
     global expected_response
+    global recv_window
+    global seq_r
+    global send_window
+    global seq_s
 
-    """Continuously receive and display messages from the server"""
-    while (True):
-        # Read from server
-        line = rfile.readline()
-        if not line:
-            print("[INFO] Server disconnected.")
-            break
-        
-        line.strip()
-        #print("RECIEVED: " + line) # For debugging/testing
+    while True:
+        #print(f"DEBUG: Messages to process {recv_window}")
         try:
-            msg = Message.decode(line)
+            msg = heapq.heappop(recv_window)[1]
+            #print(f"DEBUG PROCESSING: seq: {msg.seq}, pck_t: {msg.packet_type}, type: {msg.type}, expected: {msg.expected}, id: {msg.id}, msg_len: {msg.msg_len}, msg: {msg.msg}\n\n\n")
+        except IndexError: # all messages read
+            #print(f"DEBUG: All messages processed")
+            return
+        
+        if msg.seq < seq_r: # skip duplicates
+            #print(f"DEBUG: Duplicate")
+            continue
 
-            #print(f"DECODED: {msg.id} {msg.type} {msg.expected} {msg.msg}\n") # For debugging/testing
-            
-            expected_response = msg.expected
-            
+        if msg.seq > seq_r: # end if message is a future packet
+            #print(f"DEBUG: Future")
+            heapq.heappush(recv_window, (msg.seq, msg))
+            send_ack(s, seq_r)
+            return 
+        
+        # process the message
+        try:
+            #print(f"DEBUG: Processing message")
             type = msg.type
+            expected_response = msg.expected
+
             if type == MessageType.CONNECT:
-                client_id = msg.msg
+                client_id = int(msg.msg)
 
             elif type == MessageType.TEXT:
-                print(f"[{msg.id}] {msg.msg}")
-            
+                print(f"[SERVER] {msg.msg}")
+
             elif type == MessageType.CHAT:
                 pass
             
@@ -57,40 +77,130 @@ def receive_messages(rfile):
                 board_lines = msg.msg.split('|')
                 for line in board_lines:
                     print(line)
-            
+
             elif type == MessageType.PLACE:
                 # these don't need to be printed
                 pass
             
             elif type == MessageType.RESULT:
                 print(msg.msg)
-            
+
             elif type == MessageType.DISCONNECT:
                 print("[INFO] you have been disconnected from the server")
                 quit()
-            
-            else:
-                # client shouldn't receive a FIRE or NONE message
-                # should probably send a NACK or something
-                print("Error unexpected message type")
 
-        except ValueError:
+            else:
+                print("Error unexpected message type")
+                send_nack(s)
+                return
+            
+            # all went well
+            seq_r += 1
+            seq_r = seq_r&((1<<16)-1) # loop if needed
+
+        except ValueError as e:
             # needs to be handled better
-            print("Failure decoding message, ignoring")
-            pass
+            print("#####\n"*5)
+            print(f"Failure decoding message, ignoring {e}")
+            print("#####\n"*5)
+            return
+#endregion
+
+#region Receive
+def receive_messages(s):
+    # These have to be here otherwise they don't work properly when referenced
+    global client_id
+    global expected_response
+    global recv_window
+    global seq_r
+    global send_window
+    global seq_s
+    global incoming
+
+    """Continuously receive and display messages from the server"""
+    while (True):
+        # Read from server
+        raw = s.recv(BUFSIZE)
+        
+        if not raw:
+            print("[INFO] Server disconnected.")
+            break
+        
+        incoming += bytearray(raw)
+
+        while len(incoming) >= 9:
+            try:
+                msg = Message.decode(incoming)
+                incoming = incoming[9+msg.msg_len:]
+
+                if msg.packet_type == PacketType.ACK:
+                    sent = heapq.heappop(send_window)
+                    while (sent[0] < msg.seq):
+                        sent = heapq.heappop(send_window)
+                    heapq.heappush(send_window, sent) # push the last element popped back on
+                    continue
+                
+                if msg.packet_type == PacketType.NACK: # resend all messages
+                    messages = send_window.copy()
+                    while True:
+                        try:
+                            send_msg(s, heapq.heappop(messages)[1], False) 
+                        except IndexError:
+                            break
+                    continue
+                
+                if (msg.seq >= seq_r): # queue future packets
+                    heapq.heappush(recv_window, (msg.seq, msg))
+                    continue
+                
+                if (msg.seq < seq_r): #ignore already received packets
+                    continue
+
+                
+            except NotEnoughBytesError:
+                break
+            
+            except ChecksumMismatchError:
+                send_nack(s)
+                incoming = bytearray()
+                break
+
+        process_messages(s)
 #endregion
 
 #region Send
-def send_messages(wfile):
+def send_msg(s, msg, new=True):
+    encoded = msg.encode()
+    #print(f"DEBUG SENDING: seq: {msg.seq}, pck_t: {msg.packet_type}, type: {msg.type}, expected: {msg.expected}, id: {msg.id}, msg_len: {msg.msg_len}, msg: {msg.msg}\n\n\n")
+    s.send(encoded)
+    if new:
+        heapq.heappush(send_window, (msg.seq, msg))
+        global seq_s
+        seq_s = (seq_s+1)&((1<<16)-1) # add one and loop if needed
+
+def send_ack(s, seq):
+    ack = Message(id=client_id, type=MessageType.TEXT, expected=MessageType.TEXT, msg="",\
+                           seq=seq, packet_type=PacketType.ACK)
+    send_msg(s, ack, False)
+
+def send_nack(s):
+    nack = Message(id=client_id, type=MessageType.TEXT, expected=MessageType.TEXT, msg="",\
+                           seq=0, packet_type=PacketType.NACK)
+    send_msg(s, nack, False)
+
+def send_messages(s):
     while(True):
-        user_input = input(">> ")
+        try:
+            user_input = input("")
+        except KeyboardInterrupt:
+            return
 
         ## handle word inputs to decided type then check mismatch at recieve
         command = user_input.split(" ")
-        print(command)
+        #print(command)
 
         send_type = expected_response
-        print(expected_response)
+        #print(expected_response)
 
         match command[0].upper():
             case "FIRE":
@@ -112,53 +222,50 @@ def send_messages(wfile):
                 pass
         
         user_msg = " ".join(command)
-        print("user message: " + user_msg)
+        #print("user message: " + user_msg)
 
-        msg = Message(id=client_id, type=send_type, expected=MessageType.NONE, msg=user_msg)
-        wfile.write(msg.encode() + '\n') # DO NOT REMOVE THE NEW LINE CHARACTER OR ELSE IT WON'T SEND
-        wfile.flush()
-
+        msg = Message(id=client_id, type=send_type, expected=MessageType.TEXT, msg=user_msg, seq=seq_s)
+        send_msg(s, msg)
+        
         if send_type == MessageType.DISCONNECT:
             print("quitting")
             quit()
 #endregion
 
+#region Connect
 def main():
     # set username at start
     print("Welcome to BEER, please enter a username to connect")
     username = ""
     while username == "":
-        username = input(">> ")
-
-
+        try:
+            username = input("")
+        except KeyboardInterrupt:
+            return
 
     # Set up connection
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
         s.connect((HOST, PORT))
-        rfile = s.makefile('r')
-        wfile = s.makefile('w')
         
         # Start a thread for receiving messages
-        receiver = threading.Thread(target=receive_messages, args=[rfile])
+        receiver = threading.Thread(target=receive_messages, args=[s])
         receiver.daemon = True # should be repalced with a cleaner exit if needed
         receiver.start()
 
         while True:
             if client_id != None:
-                msg = Message(id=client_id, type=MessageType.CONNECT, expected=MessageType.NONE, msg=username)
-                wfile.write(msg.encode() + '\n')
-                wfile.flush()
+                msg = Message(id=client_id, type=MessageType.CONNECT, expected=MessageType.TEXT, msg=username)
+                send_msg(s, msg)
                 break
 
         # Main thread handles sending user input
         try:
-            send_messages(wfile)
+            send_messages(s)
         except KeyboardInterrupt:
             print("\n[INFO] Client exiting.")
-            msg = Message(id=client_id, type=MessageType.DISCONNECT, expected=MessageType.NONE, msg=client_id)
-            print(msg.encode())
-            wfile.write(msg.encode() + '\n')
-            wfile.flush()
+            msg = Message(id=client_id, type=MessageType.DISCONNECT, expected=MessageType.TEXT, msg=client_id)
+            send_msg(s, msg)
+#endregion
 
 if __name__ == "__main__":
     main()
