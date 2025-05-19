@@ -189,7 +189,10 @@ def send_nack(s):
 
 def send_messages(s):
     while(True):
-        user_input = input(">> ")
+        try:
+            user_input = input(">> ")
+        except KeyboardInterrupt:
+            return
 
         ## handle word inputs to decided type then check mismatch at recieve
         command = user_input.split(" ")
@@ -234,7 +237,10 @@ def main():
     print("Welcome to BEER, please enter a username to connect")
     username = ""
     while username == "":
-        username = input(">> ")
+        try:
+            username = input("")
+        except KeyboardInterrupt:
+            return
 
     # Set up connection
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:

@@ -117,27 +117,21 @@ def end_game(game):
 #region Process Msg
 def process_client_messages(client):
     while True:
-        print(f"DEBUG: Messages to process {client.recv_window}")
         try:
             msg = heapq.heappop(client.recv_window)[1]
-            print(f"DEBUG PROCESSING: seq: {msg.seq}, pck_t: {msg.packet_type}, type: {msg.type}, expected: {msg.expected}, id: {msg.id}, msg_len: {msg.msg_len}, msg: {msg.msg}\n\n\n")
         except IndexError: # all messages sent
-            print(f"DEBUG: All messages processed")
             return
         
         if msg.seq < client.seq_r: # skip duplicates
-            print(f"DEBUG: Duplicate")
             continue
 
         if msg.seq > client.seq_r: # end if message is a future packet
-            print(f"DEBUG: Future")
             heapq.heappush(client.recv_window, (msg.seq, msg))
             send_ack(client, client.seq_r)
             return 
         
         # process the message
         try:
-            print(f"DEBUG: Processing message")
             try:
                 ## Handles inputs out side of game world
                 if msg.type == MessageType.CHAT:
@@ -212,14 +206,6 @@ def handle_client(client):
         id_msg = Message(id=SERVER_ID, type=MessageType.CONNECT, expected=MessageType.CHAT, msg=client.id)
         send_message_to(client, id_msg)
 
-        # wait to recieve client username
-        #while client.username == "":
-        #    try:
-        #        raw = socket.recv(BUFSIZE)
-        #    except:
-        #        pass
-        #    msg = Message.decode(raw)
-                    
         # check if clients username matchs disconnection
         reconnecting_player = False
 
@@ -846,22 +832,24 @@ def main():
         game_manager.start()
         
         # listen for connections
-        while True: # keeps thread open when max clients is full and allows for clients to decrease
-            while num_clients < MAX_CLIENTS:
-                s.listen(1)
-                conn, addr = s.accept()
-                print(f"[INFO] Client connected from {addr}")
+        try:
+            while True: # keeps thread open when max clients is full and allows for clients to decrease
+                while num_clients < MAX_CLIENTS:
+                    s.listen(1)
+                    conn, addr = s.accept()
+                    print(f"[INFO] Client connected from {addr}")
 
-                client = Client(conn, addr)
-                clients.append(client)
-                num_clients += 1
-                client.id = heapq.heappop(free_ids)
+                    client = Client(conn, addr)
+                    clients.append(client)
+                    num_clients += 1
+                    client.id = heapq.heappop(free_ids)
 
-                thread = threading.Thread(target=handle_client, args=[client])
-                thread.daemon = True
-                client.thread = thread
-                thread.start()
-        
+                    thread = threading.Thread(target=handle_client, args=[client])
+                    thread.daemon = True
+                    client.thread = thread
+                    thread.start()
+        except KeyboardInterrupt:
+            return
 #end region
 
 if __name__ == "__main__":
