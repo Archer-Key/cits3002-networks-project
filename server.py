@@ -823,12 +823,23 @@ def handle_disconnect(client : Client):
     ## it looks like this is firing twice, not sure why, have to look into it
     print(f"[INFO] Client [{client.id}] disconnected.")
 
+    if client not in clients:
+        return
+
     if client.timeout:
         client.timeout.active = False
-    if client in clients:
-        heapq.heappush(free_ids, client.id)
-        clients.remove(client)
-        num_clients -= 1
+    
+    heapq.heappush(free_ids, client.id)
+    clients.remove(client)
+    num_clients -= 1
+    
+    if game.get_player(client.id):
+        msg = Message(SERVER_ID, MessageType.TEXT, MessageType.CHAT, f"[INFO] player [{client.username}] has disconnected, waiting for reconnect")
+    else:
+        msg = Message(SERVER_ID, MessageType.TEXT, MessageType.CHAT, f"[INFO] spectator [{client.username}] has disconnected, waiting for reconnect")
+    
+    send_message_to_all(clients, msg)
+
     game.remove_player(client)
 
     try:
@@ -858,9 +869,6 @@ def handle_disconnect(client : Client):
     
     game.end_thread = threading.Timer(30, end_game, args=(game,))
     game.end_thread.start()
-
-    msg = Message(SERVER_ID, MessageType.TEXT, MessageType.CHAT, f"[INFO] player [{client.id}] has disconnected, waiting for reconnect")
-    game.announce_to_players(msg)
 
 
 def close_all_connections():
