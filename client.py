@@ -221,7 +221,7 @@ def send_messages(s):
                 pass
         
         user_msg = " ".join(command)
-        print("user message: " + user_msg)
+        #print("user message: " + user_msg)
 
         msg = Message(id=client_id, type=send_type, expected=MessageType.TEXT, msg=user_msg, seq=seq_s)
         send_msg(s, msg)
