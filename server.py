@@ -26,7 +26,10 @@ PORT = 5000
 SERVER_ID = 0
 
 #region Clients
-clients = [] # should store this as a heap/queue/something so that we can pop random clients
+MAX_CLIENTS = 127
+clients = []
+num_clients = 0
+free_ids = list(range(0,127))
 
 class ClientType(Enum):
     SPECTATOR = 0
@@ -140,6 +143,12 @@ def process_client_messages(client):
                 if msg.type == MessageType.CHAT:
                     handle_chat(client, msg)
                     continue
+                
+                ## should be the first message the server recieves from the client
+                elif msg.type == MessageType.CONNECT:
+                    client.username = msg.msg
+                    client.seq_r += 1
+                    continue
 
                 elif msg.type == MessageType.DISCONNECT:
                     handle_disconnect(client)
@@ -204,16 +213,13 @@ def handle_client(client):
         send_message_to(client, id_msg)
 
         # wait to recieve client username
-        while client.username == "":
-            try:
-                raw = socket.recv(BUFSIZE)
-            except:
-                pass
-            msg = Message.decode(raw)
-            ## should be the first message the server recieves from the client
-            if msg.type == MessageType.CONNECT:
-                client.username = msg.msg
-        
+        #while client.username == "":
+        #    try:
+        #        raw = socket.recv(BUFSIZE)
+        #    except:
+        #        pass
+        #    msg = Message.decode(raw)
+                    
         # check if clients username matchs disconnection
         reconnecting_player = False
 
@@ -259,7 +265,7 @@ def handle_client(client):
         while True:
             try:
                 raw = client.conn.recv(BUFSIZE)
-            except ConnectionResetError or ConnectionAbortedError:
+            except ConnectionResetError or ConnectionAbortedError or OSError:
                 # player disconnected
                 break
 
@@ -786,20 +792,22 @@ class Game:
             self.play_game()
         close_all_connections()
 
-
 game = Game()
 game_manager = None
 #endregion
 
 #region Connections
 def handle_disconnect(client : Client):
+    global num_clients
     ## it looks like this is firing twice, not sure why, have to look into it
     print(f"[INFO] Client [{client.id}] disconnected.")
 
     if client.timeout:
         client.timeout.active = False
     if client in clients:
+        heapq.heappush(free_ids, client.id)
         clients.remove(client)
+        num_clients -= 1
     game.remove_player(client)
 
     client.conn.close()
@@ -826,6 +834,8 @@ def close_all_connections():
 
 # main thread accepts clients in a loop
 def main():
+    global num_clients
+
     print(f"[INFO] Server listening on {HOST}:{PORT}")
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
         s.bind((HOST, PORT))
@@ -835,23 +845,23 @@ def main():
         game_manager.daemon = True
         game_manager.start()
         
-        num_clients = 0
-
         # listen for connections
-        while True:
-            s.listen(1)
-            conn, addr = s.accept()
-            print(f"[INFO] Client connected from {addr}")
+        while True: # keeps thread open when max clients is full and allows for clients to decrease
+            while num_clients < MAX_CLIENTS:
+                s.listen(1)
+                conn, addr = s.accept()
+                print(f"[INFO] Client connected from {addr}")
 
-            client = Client(conn, addr)
-            clients.append(client)
-            num_clients += 1
-            client.id = num_clients # can probably replace this with a classmethod
+                client = Client(conn, addr)
+                clients.append(client)
+                num_clients += 1
+                client.id = heapq.heappop(free_ids)
 
-            thread = threading.Thread(target=handle_client, args=[client])
-            thread.daemon = True
-            client.thread = thread
-            thread.start()
+                thread = threading.Thread(target=handle_client, args=[client])
+                thread.daemon = True
+                client.thread = thread
+                thread.start()
+        
 #end region
 
 if __name__ == "__main__":

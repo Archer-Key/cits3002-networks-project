@@ -1,6 +1,6 @@
 from enum import Enum
 
-BUFSIZE = 516 # Maximum size of a packet
+BUFSIZE = 520 # Maximum size of a packet
 
 #region Errors
 class NotEnoughBytesError(Exception):

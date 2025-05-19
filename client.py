@@ -66,7 +66,7 @@ def process_messages(s):
                 client_id = int(msg.msg)
 
             elif type == MessageType.TEXT:
-                print(f"[{msg.id}] {msg.msg}")
+                print(f"[SERVER] {msg.msg}")
 
             elif type == MessageType.CHAT:
                 pass
@@ -248,7 +248,7 @@ def main():
         while True:
             if client_id != None:
                 msg = Message(id=client_id, type=MessageType.CONNECT, expected=MessageType.TEXT, msg=username)
-                send_msg(s, msg, False)
+                send_msg(s, msg)
                 break
 
         # Main thread handles sending user input
