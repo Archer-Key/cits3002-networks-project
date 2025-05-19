@@ -14,6 +14,8 @@ import threading
 
 import heapq
 
+import os
+
 from protocol import *
 
 client_id = None
@@ -69,7 +71,7 @@ def process_messages(s):
                 print(f"[SERVER] {msg.msg}")
 
             elif type == MessageType.CHAT:
-                pass
+                print(msg.msg)
             
             elif type == MessageType.BOARD:
                 # Begin reading board lines
@@ -87,7 +89,7 @@ def process_messages(s):
 
             elif type == MessageType.DISCONNECT:
                 print("[INFO] you have been disconnected from the server")
-                quit()
+                raise KeyboardInterrupt
 
             else:
                 print("Error unexpected message type")
@@ -228,7 +230,7 @@ def send_messages(s):
         send_msg(s, msg)
         
         if send_type == MessageType.DISCONNECT:
-            print("quitting")
+            print("[INFO] Disconnecting from server")
             quit()
 #endregion
 

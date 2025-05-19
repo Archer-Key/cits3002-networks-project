@@ -80,7 +80,11 @@ def send_nack(client):
                            seq=0, packet_type=PacketType.NACK)
     send_message_to(client, nack, False)
 
-def handle_chat(client, msg):
+def handle_chat(client, text):
+    expected = MessageType.PLACE if game.state == GameState.PLACE else MessageType.FIRE
+    msg = Message(SERVER_ID, MessageType.CHAT, expected, "[" + client.username + "]: " + text)
+    ## send message to all except person sending
+    send_message_to_all([x for x in clients if x!= client], msg)
     pass
 #endregion
 
@@ -135,7 +139,7 @@ def process_client_messages(client):
             try:
                 ## Handles inputs out side of game world
                 if msg.type == MessageType.CHAT:
-                    handle_chat(client, msg)
+                    handle_chat(client, msg.msg)
                     continue
                 
                 ## should be the first message the server recieves from the client
@@ -143,6 +147,12 @@ def process_client_messages(client):
                     client.username = msg.msg
                     client.seq_r += 1
                     client.seq_r = client.seq_r&((1<<16)-1) # loop around
+
+                    if game.disconnected_player:
+                        if client.username == game.disconnected_player.username:
+                            print(f"reconnecting client {client.username}")
+                            game.players[game.disconnected_player_id].client = client
+                            handle_reconnect(client)
                     continue
 
                 elif msg.type == MessageType.DISCONNECT:
@@ -166,14 +176,14 @@ def process_client_messages(client):
                     if msg.type == MessageType.PLACE:
                         game.place_ship(client.id, msg.msg)
                     else:
-                        res = Message(SERVER_ID, MessageType.TEXT, MessageType.NONE, "Incorrect Command Type")
+                        res = Message(SERVER_ID, MessageType.TEXT, MessageType.PLACE, "Incorrect Command Type")
                         send_message_to(client, res)
                         
                 elif game.state == GameState.BATTLE:
                     if msg.type == MessageType.FIRE:
                         game.fire(client.id, msg.msg)
                     else:
-                        res = Message(SERVER_ID, MessageType.TEXT, MessageType.NONE, "Incorrect Command Type")
+                        res = Message(SERVER_ID, MessageType.TEXT, MessageType.FIRE, "Incorrect Command Type")
                         send_message_to(client, res)
 
                 elif game.state == GameState.END:
@@ -199,6 +209,26 @@ def process_client_messages(client):
             print("#####\n"*5)
             return
 #endregion
+
+def handle_reconnect(client):
+    if game.state == GameState.PAUSE:
+        game.state = game.previous_state
+        print(f"[INFO] player has reconnected and game is resuming to state [{game.state}]")
+        rec_msg = Message(SERVER_ID, MessageType.TEXT, MessageType.CHAT, f"Welcome back {client.username}, the game will now resume")
+        send_message_to(client, rec_msg)
+        res_msg = Message(SERVER_ID, MessageType.TEXT, MessageType.CHAT, f"Player has reconnected, resuming game")
+        send_message_to_all(clients, res_msg)
+        if game.state == GameState.BATTLE:
+            for player in game.players:
+                game.send_fire_prompt(player)
+        if game.state == GameState.PLACE:
+            for player in game.players:
+                game.send_place_prompt(player)
+        
+        game.disconnected_players -= 1
+        
+        game.end_thread.cancel()
+        game.end_thread = None
 
 #region Handle Client
 def handle_client(client):
@@ -241,6 +271,7 @@ def handle_client(client):
                 game.disconnected_players -= 1
                 
                 game.end_thread.cancel()
+                game.end_thread = None
                 
             pass
         elif game.state == GameState.END:
@@ -253,7 +284,7 @@ def handle_client(client):
         while True:
             try:
                 raw = client.conn.recv(BUFSIZE)
-            except ConnectionResetError or ConnectionAbortedError or OSError:
+            except:
                 # player disconnected
                 break
 
@@ -333,8 +364,8 @@ class GameState(Enum):
 
 class Game:
     def __init__(self):
-        self.new_game()
         self.game_number = 0
+        self.new_game()
     def new_game(self):
         self.state = GameState.WAIT
         self.players = [Player(0), Player(1)]
@@ -344,6 +375,9 @@ class Game:
         self.disconnected_players = 0
         self.disconnect_time = None
         self.player_turn = None
+        if self.game_number > 0:
+            if self.end_thread:
+                self.end_thread.cancel()
         self.end_thread = None
 #endregion
 
@@ -798,6 +832,12 @@ def handle_disconnect(client : Client):
         num_clients -= 1
     game.remove_player(client)
 
+    try:
+        msg = Message(SERVER_ID, MessageType.DISCONNECT, MessageType.DISCONNECT, "disconnected")
+        send_message_to(client, msg)
+    except:
+        pass
+
     client.conn.close()
 
     ## check if all players have disconnected and end game
@@ -809,7 +849,9 @@ def handle_disconnect(client : Client):
         game.previous_state = game.state
 
     game.state = GameState.PAUSE
-    game.end_thread = threading.Timer(6, end_game, args=(game,))
+    if game.end_thread:
+        return
+    game.end_thread = threading.Timer(30, end_game, args=(game,))
     game.end_thread.start()
 
     msg = Message(SERVER_ID, MessageType.TEXT, MessageType.CHAT, f"[INFO] player [{client.id}] has disconnected, waiting for reconnect")
