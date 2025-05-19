@@ -136,79 +136,71 @@ def process_client_messages(client):
         
         # process the message
         try:
-            try:
-                ## Handles inputs out side of game world
-                if msg.type == MessageType.CHAT:
-                    handle_chat(client, msg.msg)
-                    client.seq_r = (client.seq_r+1)&((1<<16)-1) # loop around
-                    continue
+            ## Handles inputs out side of game world
+            if msg.type == MessageType.CHAT:
+                handle_chat(client, msg.msg)
+                client.seq_r = (client.seq_r+1)&((1<<16)-1) # loop around
+                continue
+            
+            ## should be the first message the server recieves from the client
+            elif msg.type == MessageType.CONNECT:
+                client.username = msg.msg
+                client.seq_r = (client.seq_r+1)&((1<<16)-1) # loop around
+
+                if game.disconnected_player:
+                    if client.username == game.disconnected_player.username:
+                        print(f"reconnecting client {client.username}")
+                        game.players[game.disconnected_player_id].client = client
+                        handle_reconnect(client)
+                continue
+
+            elif msg.type == MessageType.DISCONNECT:
+                handle_disconnect(client)
+                continue
+            
+            if client.type == ClientType.SPECTATOR:
+                client.seq_r = (client.seq_r+1)&((1<<16)-1) # loop around
+                res = Message(SERVER_ID, MessageType.TEXT, MessageType.CHAT, "Incorrect message type.")
+                send_message_to(client, res)
+                continue
+
+            player = game.get_player(msg.id)
+            if player == None:
+                raise ValueError # a different type of error is probably better here
+            
+            # inputs during gameplay
+            if game.state == GameState.WAIT:
+                game.send_waiting_message(client)
                 
-                ## should be the first message the server recieves from the client
-                elif msg.type == MessageType.CONNECT:
-                    client.username = msg.msg
-                    client.seq_r = (client.seq_r+1)&((1<<16)-1) # loop around
-
-                    if game.disconnected_player:
-                        if client.username == game.disconnected_player.username:
-                            print(f"reconnecting client {client.username}")
-                            game.players[game.disconnected_player_id].client = client
-                            handle_reconnect(client)
-                    continue
-
-                elif msg.type == MessageType.DISCONNECT:
-                    handle_disconnect(client)
-                    continue
-                
-                if client.type == ClientType.SPECTATOR:
-                    client.seq_r = (client.seq_r+1)&((1<<16)-1) # loop around
-                    res = Message(SERVER_ID, MessageType.TEXT, MessageType.CHAT, "Incorrect message type.")
-                    send_message_to(client, res)
-                    continue
-
-                player = game.get_player(msg.id)
-                if player == None:
-                    raise ValueError # a different type of error is probably better here
-                
-                # inputs during gameplay
-                if game.state == GameState.WAIT:
-                    game.send_waiting_message(client)
-                    
-            ## Needs better way to check mismatch between game state and message type
-                elif game.state == GameState.PLACE:
-                    if msg.type == MessageType.PLACE:
-                        game.place_ship(client.id, msg.msg)
-                    else:
-                        res = Message(SERVER_ID, MessageType.TEXT, MessageType.PLACE, "Incorrect Command Type")
-                        send_message_to(client, res)
-                        
-                elif game.state == GameState.BATTLE:
-                    if msg.type == MessageType.FIRE:
-                        game.fire(client.id, msg.msg)
-                    else:
-                        res = Message(SERVER_ID, MessageType.TEXT, MessageType.FIRE, "Incorrect Command Type")
-                        send_message_to(client, res)
-
-                elif game.state == GameState.END:
-                    res = Message(SERVER_ID, MessageType.TEXT, MessageType.CHAT,\
-                                  "Game has ended. Thank you for playing!")
-                    send_message_to(client, res)
-
+        ## Needs better way to check mismatch between game state and message type
+            elif game.state == GameState.PLACE:
+                if msg.type == MessageType.PLACE:
+                    game.place_ship(client.id, msg.msg)
                 else:
-                    print("Error, game is in an unknown state.")
+                    res = Message(SERVER_ID, MessageType.TEXT, MessageType.PLACE, "Incorrect Command Type")
+                    send_message_to(client, res)
+                    
+            elif game.state == GameState.BATTLE:
+                if msg.type == MessageType.FIRE:
+                    game.fire(client.id, msg.msg)
+                else:
+                    res = Message(SERVER_ID, MessageType.TEXT, MessageType.FIRE, "Incorrect Command Type")
+                    send_message_to(client, res)
 
-            except ValueError:
-                # handle malformed message
-                pass
+            elif game.state == GameState.END:
+                res = Message(SERVER_ID, MessageType.TEXT, MessageType.CHAT,\
+                              "Game has ended. Thank you for playing!")
+                send_message_to(client, res)
+
+            else:
+                print("Error, game is in an unknown state.")
+
+        except ValueError:
+            # handle malformed message
+            pass
           
-            # all went well
-            client.seq_r = (client.seq_r+1)&((1<<16)-1) # loop around
-
-        except ValueError as e:
-            # needs to be handled better
-            print("#####\n"*5)
-            print(f"Failure decoding message, ignoring {e}")
-            print("#####\n"*5)
-            return
+        # all went well
+        client.seq_r = (client.seq_r+1)&((1<<16)-1) # loop around
 #endregion
 
 def handle_reconnect(client):
