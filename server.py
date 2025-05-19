@@ -156,6 +156,7 @@ def process_client_messages(client):
 
             elif msg.type == MessageType.DISCONNECT:
                 handle_disconnect(client)
+                client.seq_r = (client.seq_r+1)&((1<<16)-1) # loop around
                 continue
             
             if client.type == ClientType.SPECTATOR:
