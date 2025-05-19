@@ -190,7 +190,7 @@ def send_nack(s):
 def send_messages(s):
     while(True):
         try:
-            user_input = input(">> ")
+            user_input = input("")
         except KeyboardInterrupt:
             return
 
