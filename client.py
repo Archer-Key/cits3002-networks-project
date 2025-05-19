@@ -135,7 +135,7 @@ def receive_messages(s):
                 if msg.packet_type == PacketType.ACK:
                     sent = heapq.heappop(send_window)
                     while (sent[0] < msg.seq):
-                        sent = heapq.heapop(send_window)
+                        sent = heapq.heappop(send_window)
                     heapq.heappush(send_window, sent) # push the last element popped back on
                     continue
                 
