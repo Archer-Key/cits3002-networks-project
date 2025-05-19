@@ -140,13 +140,13 @@ def process_client_messages(client):
                 ## Handles inputs out side of game world
                 if msg.type == MessageType.CHAT:
                     handle_chat(client, msg.msg)
+                    client.seq_r = (client.seq_r+1)&((1<<16)-1) # loop around
                     continue
                 
                 ## should be the first message the server recieves from the client
                 elif msg.type == MessageType.CONNECT:
                     client.username = msg.msg
-                    client.seq_r += 1
-                    client.seq_r = client.seq_r&((1<<16)-1) # loop around
+                    client.seq_r = (client.seq_r+1)&((1<<16)-1) # loop around
 
                     if game.disconnected_player:
                         if client.username == game.disconnected_player.username:
